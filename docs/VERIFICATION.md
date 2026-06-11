@@ -382,3 +382,47 @@ when the Kalshi rules text shows sworn-in/inaugurated/member-of-party language
 each side showing exactly one basis. Texts showing both bases or neither stay
 with the existing conservative checks (manual_review on missing facts). This
 check rejects; it never accepts, and acceptance thresholds are unchanged.
+
+## 8. 2,000-market dry-run: office-level and basket-scope conflicts (2026-06-11)
+
+A wider discovery window (`ARB_POLYMARKET_MAX_MARKETS=2000`,
+`ARB_POLYMARKET_MAX_PAGES=20`, alerts off) produced:
+
+- Kalshi discovered=65225 scannable=65223
+- Polymarket discovered=2000 scannable=2000
+- raw_title=30080, structured=2313
+- manual_review=5, accepted=0, rejected=30075
+
+The 5 manual-review rows were inspected against live rules text and exposed
+two false-positive families, both **not equivalent**:
+
+1. **State legislative chamber control vs U.S. Senate race.** Kalshi
+   `KXSTATELEG-NCSEN26-R` — *"If the Republican party wins the North Carolina
+   State Senate in 2026 … Winning is defined as holding more seats than any
+   other party"* — paired with Polymarket *"the winner of the 2026 midterm
+   North Carolina U.S. Senate election, inclusive of any run-offs"*. Different
+   offices and different elections despite near-identical titles.
+2. **Multi-state sweep basket vs single race.** Kalshi
+   `KXDEMCOREFOURSENATESWEEP-26NOV03` — *"If Democrats win the 2026 Senate
+   elections in ALL of the following states: Georgia, Michigan, North
+   Carolina, AND Maine"* — paired with the single-state Polymarket North
+   Carolina Senate market. An all-of-N contract is never equivalent to one of
+   its legs.
+
+Encoded in `rule_equivalence.py` as two narrow **rejection-only** rules (they
+can never accept a pair; acceptance thresholds are unchanged):
+
+- `office_level_conflict`: fires only when one side's rules text classifies
+  unambiguously as state-legislature (State Senate/House/Assembly/legislature,
+  general assembly, "holding more seats") and the other unambiguously as
+  federal Senate (U.S./US/United States/federal Senate). Text matching both
+  patterns, or a bare "Senate race" with no level evidence, classifies as
+  ambiguous and falls through to the existing conservative checks
+  (manual_review on missing facts).
+- `basket_scope_conflict`: fires only when one side is a confident basket —
+  at least two distinct full state names plus all-of/sweep/win-all wording or
+  a comma/"and" chain of state names — and the other side references exactly
+  one state. Same-basket pairs, candidate-name lists (only state names count
+  toward the chain), and zero-state texts never fire.
+
+Both surface as named buckets in the scan rejection histogram.

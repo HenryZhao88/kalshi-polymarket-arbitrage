@@ -52,6 +52,23 @@ def test_settlement_basis_conflict_has_its_own_histogram_bucket() -> None:
     )
 
 
+def test_office_level_and_basket_scope_have_their_own_histogram_buckets() -> None:
+    office = (
+        "office_level_conflict: one venue resolves on state legislative chamber "
+        "control and the other on the U.S. Senate race"
+    )
+    basket = (
+        "basket_scope_conflict: kalshi requires multiple states to all resolve "
+        "the same way while polymarket covers a single race"
+    )
+    assert _primary_rejection_bucket((office,)) == "office_level_conflict"
+    assert _primary_rejection_bucket((basket,)) == "basket_scope_conflict"
+    assert (
+        _primary_rejection_bucket((basket, "similarity below review threshold"))
+        == "basket_scope_conflict"
+    )
+
+
 KALSHI_MARKET = {
     "ticker": "KXBTCD-26JUN30-T70000",
     "title": "Bitcoin above $70,000 on June 30?",

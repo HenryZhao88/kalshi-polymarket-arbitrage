@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+from arb_scanner.app.markets.parsers import US_STATE_NAMES
+
 ACCEPT_THRESHOLD = 0.9
 REVIEW_THRESHOLD = 0.6
 
@@ -62,6 +64,114 @@ def settlement_basis_conflict(kalshi_text: str, poly_text: str) -> str | None:
         "settlement_basis_conflict: Kalshi resolves on the officeholder sworn "
         "in/inaugurated while Polymarket resolves on the called/certified "
         "election winner (verified 2026-06-11, docs/VERIFICATION.md §7)"
+    )
+
+
+# Office-level divergence verified in the 2026-06-11 2,000-market dry-run
+# (docs/VERIFICATION.md §8): Kalshi KXSTATELEG markets pay on STATE legislative
+# chamber control ("wins the North Carolina State Senate … holding more
+# seats"), while the title-similar Polymarket markets pay on the federal
+# U.S. Senate race ("the 2026 midterm North Carolina U.S. Senate election").
+# Different offices, different elections — never the same bet.
+_STATE_LEGISLATURE_OFFICE = re.compile(
+    r"\bstate\s+(?:senate|house|assembly|legislature)\b|"
+    r"\bgeneral assembly\b|\blegislative chamber\b|\bholding more seats\b",
+    re.IGNORECASE,
+)
+_FEDERAL_SENATE_OFFICE = re.compile(
+    r"\b(?:u\.?\s?s\.?|united states|federal)\s+senate\b",
+    re.IGNORECASE,
+)
+
+
+def _office_level(text: str) -> str | None:
+    """Classify rules text as state-legislature or federal-senate, else None.
+
+    Text matching both patterns is ambiguous and classifies as None: pairs
+    without one clear office level on each side are left to the existing
+    conservative checks (manual_review on missing facts), never rejected here.
+    """
+    state = bool(_STATE_LEGISLATURE_OFFICE.search(text))
+    federal = bool(_FEDERAL_SENATE_OFFICE.search(text))
+    if state and not federal:
+        return "state_legislature"
+    if federal and not state:
+        return "federal_senate"
+    return None
+
+
+def office_level_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect a state-legislative-chamber market paired with a U.S. Senate market."""
+    kalshi_level, poly_level = _office_level(kalshi_text), _office_level(poly_text)
+    if kalshi_level is None or poly_level is None or kalshi_level == poly_level:
+        return None
+    return (
+        "office_level_conflict: one venue resolves on state legislative "
+        f"chamber control and the other on the U.S. Senate race "
+        f"(kalshi={kalshi_level}, polymarket={poly_level}; "
+        "verified 2026-06-11, docs/VERIFICATION.md §8)"
+    )
+
+
+# Basket/sweep divergence from the same dry-run: Kalshi
+# KXDEMCOREFOURSENATESWEEP requires Democrats to win Senate races in Georgia,
+# Michigan, North Carolina, AND Maine, while the paired Polymarket market is
+# the single North Carolina race. An all-of-N-states contract is never
+# equivalent to one of its legs.
+_BASKET_PHRASES = re.compile(
+    r"\ball of the following\b|\bsweep\b|\bwins? all\b|\bin all of\b",
+    re.IGNORECASE,
+)
+_STATE_NAME_RE = re.compile(
+    "|".join(
+        rf"\b{name.replace(' ', r'\s+')}\b"
+        for name in sorted(US_STATE_NAMES, key=len, reverse=True)
+    ),
+    re.IGNORECASE,
+)
+# Two-or-more state names chained by commas/and/& ("Georgia, Michigan,
+# North Carolina, AND Maine"). Candidate-name lists never match: only state
+# names participate in the chain.
+_STATE_CONJUNCTION_RE = re.compile(
+    rf"(?:{_STATE_NAME_RE.pattern})"
+    rf"(?:\s*(?:,|and\b|&)\s*(?:and\s+)?(?:{_STATE_NAME_RE.pattern}))+",
+    re.IGNORECASE,
+)
+
+
+def _distinct_states(text: str) -> frozenset[str]:
+    return frozenset(
+        " ".join(match.group(0).lower().split()) for match in _STATE_NAME_RE.finditer(text)
+    )
+
+
+def _is_state_basket(text: str) -> bool:
+    states = _distinct_states(text)
+    if len(states) < 2:
+        return False
+    return bool(_BASKET_PHRASES.search(text)) or bool(_STATE_CONJUNCTION_RE.search(text))
+
+
+def basket_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect a multi-state all-must-win basket paired with a single-state race.
+
+    Fires only when one side is a confident basket (>=2 distinct state names
+    plus all-of/sweep wording or a comma/and chain of states) and the other
+    side confidently references exactly one state. Both-basket pairs and
+    zero-state (ambiguous) texts are left to the other checks.
+    """
+    kalshi_basket, poly_basket = _is_state_basket(kalshi_text), _is_state_basket(poly_text)
+    if kalshi_basket == poly_basket:
+        return None
+    single_text = poly_text if kalshi_basket else kalshi_text
+    if len(_distinct_states(single_text)) != 1:
+        return None
+    basket_venue = "kalshi" if kalshi_basket else "polymarket"
+    single_venue = "polymarket" if kalshi_basket else "kalshi"
+    return (
+        f"basket_scope_conflict: {basket_venue} requires multiple states to "
+        f"all resolve the same way while {single_venue} covers a single race "
+        "(verified 2026-06-11, docs/VERIFICATION.md §8)"
     )
 
 
@@ -130,11 +240,13 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         warnings.append("market resolution text missing on at least one venue")
         missing.append("resolution_text")
 
-    # Divergent settlement bases (sworn-in officeholder vs called election
-    # winner) settle differently in documented scenarios — hard failure.
-    basis_conflict = settlement_basis_conflict(kalshi.resolution_text, poly.resolution_text)
-    if basis_conflict:
-        failures.append(basis_conflict)
+    # Structured text-evidence conflicts verified against live venue rules
+    # (docs/VERIFICATION.md §7–8) — each detection is a hard failure. These
+    # only ever reject; ambiguous text falls through to the warnings above.
+    for detect in (settlement_basis_conflict, office_level_conflict, basket_scope_conflict):
+        conflict = detect(kalshi.resolution_text, poly.resolution_text)
+        if conflict:
+            failures.append(conflict)
 
     # Void / DNP / postponement handling.
     if kalshi.void_policy is None or poly.void_policy is None:

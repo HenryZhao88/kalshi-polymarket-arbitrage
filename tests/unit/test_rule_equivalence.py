@@ -10,7 +10,9 @@ from arb_scanner.app.markets.rule_equivalence import (
     KalshiRuleFacts,
     MatchStatus,
     PolymarketRuleFacts,
+    basket_scope_conflict,
     decide_status,
+    office_level_conflict,
     settlement_basis_conflict,
     validate_rules,
 )
@@ -190,6 +192,149 @@ class TestSettlementBasisConflict:
             "The person sworn in to the governorship is a member of the Republican party."
         )
         assert settlement_basis_conflict(contract_terms, POLY_GOVERNOR_RULES) is not None
+
+
+# Live rules text from the 2026-06-11 2,000-market dry-run
+# (docs/VERIFICATION.md §8).
+KALSHI_STATE_SENATE_RULES = (
+    "If the Republican party wins the North Carolina State Senate in 2026, then "
+    "the market resolves to Yes. Winning is defined as holding more seats than "
+    "any other party."
+)
+POLY_US_SENATE_RULES = (
+    "This market will resolve according to the winner of the 2026 midterm North "
+    "Carolina U.S. Senate election, inclusive of any run-offs."
+)
+KALSHI_SWEEP_RULES = (
+    "If Democrats win the 2026 Senate elections in ALL of the following states: "
+    "Georgia, Michigan, North Carolina, AND Maine, then the market resolves to Yes."
+)
+POLY_NC_SENATE_RULES = (
+    "This market will resolve according to the winner of the 2026 North Carolina "
+    "Senate race."
+)
+
+
+class TestOfficeLevelConflict:
+    """State legislative chamber control vs U.S. Senate race."""
+
+    def test_state_senate_vs_us_senate_is_rejected(self) -> None:
+        message = office_level_conflict(KALSHI_STATE_SENATE_RULES, POLY_US_SENATE_RULES)
+        assert message is not None
+        assert "office_level_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_STATE_SENATE_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_US_SENATE_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("office_level_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_democratic_variant_is_rejected(self) -> None:
+        kalshi = KALSHI_STATE_SENATE_RULES.replace("Republican", "Democratic")
+        assert office_level_conflict(kalshi, POLY_US_SENATE_RULES) is not None
+
+    def test_republican_variant_is_rejected_in_either_direction(self) -> None:
+        assert office_level_conflict(POLY_US_SENATE_RULES, KALSHI_STATE_SENATE_RULES) is not None
+
+    def test_us_senate_vs_us_senate_is_not_rejected(self) -> None:
+        assert office_level_conflict(POLY_US_SENATE_RULES, POLY_US_SENATE_RULES) is None
+
+    def test_state_senate_vs_state_senate_is_not_rejected(self) -> None:
+        assert (
+            office_level_conflict(KALSHI_STATE_SENATE_RULES, KALSHI_STATE_SENATE_RULES) is None
+        )
+
+    def test_ambiguous_senate_with_no_level_evidence_falls_through(self) -> None:
+        ambiguous = "Resolves according to the winner of the North Carolina Senate race."
+        assert office_level_conflict(ambiguous, ambiguous) is None
+        assert office_level_conflict(KALSHI_STATE_SENATE_RULES, ambiguous) is None
+        # And without other evidence the pair stays manual_review, not rejected.
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=ambiguous,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=ambiguous,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert result.hard_failures == ()
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_text_with_both_levels_is_ambiguous_and_falls_through(self) -> None:
+        both = (
+            "Covers the State Senate as well as the U.S. Senate race in North Carolina."
+        )
+        assert office_level_conflict(both, POLY_US_SENATE_RULES) is None
+
+
+class TestBasketScopeConflict:
+    """Multi-state all-must-win sweep vs single-state race."""
+
+    def test_four_state_sweep_vs_single_race_is_rejected(self) -> None:
+        message = basket_scope_conflict(KALSHI_SWEEP_RULES, POLY_NC_SENATE_RULES)
+        assert message is not None
+        assert "basket_scope_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_SWEEP_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_NC_SENATE_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("basket_scope_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_fires_in_either_direction(self) -> None:
+        assert basket_scope_conflict(POLY_NC_SENATE_RULES, KALSHI_SWEEP_RULES) is not None
+
+    def test_same_basket_on_both_sides_is_not_rejected(self) -> None:
+        assert basket_scope_conflict(KALSHI_SWEEP_RULES, KALSHI_SWEEP_RULES) is None
+
+    def test_candidate_name_list_is_not_a_basket(self) -> None:
+        candidates = (
+            "Will Alice Johnson, Bob Smith, or Carol Davis win the North Carolina "
+            "Senate race in 2026?"
+        )
+        assert basket_scope_conflict(candidates, POLY_NC_SENATE_RULES) is None
+
+    def test_single_state_vs_single_state_is_not_rejected(self) -> None:
+        assert basket_scope_conflict(POLY_NC_SENATE_RULES, POLY_NC_SENATE_RULES) is None
+
+    def test_zero_state_text_is_uncertain_and_falls_through(self) -> None:
+        no_states = "Resolves according to the winner of the Senate race."
+        assert basket_scope_conflict(KALSHI_SWEEP_RULES, no_states) is None
+
+    def test_two_states_mentioned_without_basket_language_is_not_a_basket(self) -> None:
+        # Mentioning a second state outside a conjunction chain (e.g. a
+        # comparison) must not classify as a basket on its own.
+        comparison = (
+            "Resolves according to the winner of the 2026 North Carolina Senate "
+            "race. Unlike the market for Georgia this market has no run-off clause."
+        )
+        assert basket_scope_conflict(comparison, POLY_NC_SENATE_RULES) is None
 
 
 class TestDecideStatus:
