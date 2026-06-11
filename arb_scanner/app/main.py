@@ -66,6 +66,7 @@ def cli(argv: list[str] | None = None) -> int:
     replay = sub.add_parser("replay", help="replay stored snapshots through the simulator")
     replay.add_argument("--database-url", default=None)
     report = sub.add_parser("report", help="render backtest metrics report")
+    report.add_argument("--database-url", default=None)
     report.add_argument("--out", default="reports/report.html")
 
     args = parser.parse_args(argv)
