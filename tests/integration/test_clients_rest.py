@@ -1,0 +1,200 @@
+"""REST client integration tests against a local aiohttp server serving the
+committed live fixtures (captured 2026-06-11)."""
+
+import json
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import Any
+
+import aiohttp
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+from arb_scanner.app.clients.base import NotFoundError, RateLimitedError
+from arb_scanner.app.clients.geoblock import (
+    ExecutionDisabledError,
+    GeoblockClient,
+    ensure_execution_allowed,
+)
+from arb_scanner.app.clients.kalshi_rest import KalshiRestClient
+from arb_scanner.app.clients.polymarket_clob import PolymarketClobClient
+from arb_scanner.app.config import Mode, Settings
+
+FIXTURES = Path("tests/fixtures/live_2026-06-11")
+
+AiohttpClientFn = Callable[[web.Application], Awaitable[TestClient[Any, Any]]]
+
+
+@pytest.fixture
+async def aiohttp_client() -> Any:
+    clients: list[TestClient[Any, Any]] = []
+
+    async def factory(app: web.Application) -> TestClient[Any, Any]:
+        client: TestClient[Any, Any] = TestClient(TestServer(app))
+        await client.start_server()
+        clients.append(client)
+        return client
+
+    yield factory
+    for client in clients:
+        await client.close()
+
+
+def fixture_json(name: str) -> Any:
+    return json.loads((FIXTURES / name).read_text())
+
+
+async def make_kalshi(aiohttp_client: AiohttpClientFn) -> KalshiRestClient:
+    app = web.Application()
+
+    async def markets(request: web.Request) -> web.Response:
+        return web.json_response(fixture_json("kalshi_markets.json"))
+
+    async def orderbook(request: web.Request) -> web.Response:
+        if request.match_info["ticker"] == "MISSING":
+            return web.json_response({"error": "not found"}, status=404)
+        return web.json_response(fixture_json("kalshi_orderbook_nonempty.json"))
+
+    async def fee_changes(request: web.Request) -> web.Response:
+        return web.json_response(fixture_json("kalshi_fee_changes.json"))
+
+    app.router.add_get("/trade-api/v2/markets", markets)
+    app.router.add_get("/trade-api/v2/markets/{ticker}/orderbook", orderbook)
+    app.router.add_get("/trade-api/v2/series/fee_changes", fee_changes)
+    client = await aiohttp_client(app)
+    assert client.session is not None
+    return KalshiRestClient(client.session, base_url=str(client.make_url("")))
+
+
+class TestKalshiRest:
+    async def test_get_markets(self, aiohttp_client: AiohttpClientFn) -> None:
+        kalshi = await make_kalshi(aiohttp_client)
+        result = await kalshi.get_markets(limit=3)
+        assert "markets" in result and len(result["markets"]) > 0
+
+    async def test_get_orderbook_fixture_roundtrip(self, aiohttp_client: AiohttpClientFn) -> None:
+        kalshi = await make_kalshi(aiohttp_client)
+        payload = await kalshi.get_orderbook("KXNASDAQ100Y-26DEC31H1600-T33000")
+        assert payload["orderbook_fp"]["yes_dollars"]
+
+    async def test_404_maps_to_not_found(self, aiohttp_client: AiohttpClientFn) -> None:
+        kalshi = await make_kalshi(aiohttp_client)
+        with pytest.raises(NotFoundError):
+            await kalshi.get_orderbook("MISSING")
+
+    async def test_get_series_fee_changes(self, aiohttp_client: AiohttpClientFn) -> None:
+        kalshi = await make_kalshi(aiohttp_client)
+        result = await kalshi.get_series_fee_changes()
+        assert "series_fee_change_arr" in result
+
+
+class TestRetries:
+    async def test_retries_on_429_then_succeeds(self, aiohttp_client: AiohttpClientFn) -> None:
+        calls = {"n": 0}
+
+        async def flaky(request: web.Request) -> web.Response:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return web.json_response({"error": "too many requests"}, status=429)
+            return web.json_response({"ok": True})
+
+        app = web.Application()
+        app.router.add_get("/trade-api/v2/exchange/status", flaky)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(client.session, base_url=str(client.make_url("")))
+        result = await kalshi.get_exchange_status()
+        assert result == {"ok": True}
+        assert calls["n"] == 3
+
+    async def test_gives_up_after_max_attempts(self, aiohttp_client: AiohttpClientFn) -> None:
+        async def always_429(request: web.Request) -> web.Response:
+            return web.json_response({"error": "too many requests"}, status=429)
+
+        app = web.Application()
+        app.router.add_get("/trade-api/v2/exchange/status", always_429)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(client.session, base_url=str(client.make_url("")))
+        with pytest.raises(RateLimitedError):
+            await kalshi.get_exchange_status()
+
+
+class TestPolymarketClob:
+    async def test_get_book_fixture_roundtrip(self, aiohttp_client: AiohttpClientFn) -> None:
+        app = web.Application()
+
+        async def book(request: web.Request) -> web.Response:
+            assert request.query["token_id"]
+            return web.json_response(fixture_json("poly_book.json"))
+
+        app.router.add_get("/book", book)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        clob = PolymarketClobClient(client.session, base_url=str(client.make_url("")))
+        payload = await clob.get_book("78433024518676680431174478322854148606578065650008")
+        assert payload["bids"]
+
+
+class TestGeoblockGate:
+    @staticmethod
+    def app_with_geoblock(blocked: bool) -> web.Application:
+        app = web.Application()
+
+        async def geoblock(request: web.Request) -> web.Response:
+            return web.json_response(
+                {"blocked": blocked, "ip": "203.0.113.42", "country": "US", "region": "NY"}
+            )
+
+        app.router.add_get("/api/geoblock", geoblock)
+        return app
+
+    async def test_discovery_mode_always_disabled(self, aiohttp_client: AiohttpClientFn) -> None:
+        client = await aiohttp_client(self.app_with_geoblock(blocked=False))
+        assert client.session is not None
+        geo = GeoblockClient(client.session, base_url=str(client.make_url("")))
+        settings = Settings(_env_file=None)
+        with pytest.raises(ExecutionDisabledError, match="discovery-only"):
+            await ensure_execution_allowed(settings, geo)
+
+    async def test_blocked_region_disables_even_in_execution_mode(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        client = await aiohttp_client(self.app_with_geoblock(blocked=True))
+        assert client.session is not None
+        geo = GeoblockClient(client.session, base_url=str(client.make_url("")))
+        settings = Settings(_env_file=None, mode=Mode.EXECUTION_ENABLED)
+        with pytest.raises(ExecutionDisabledError, match="hard-disabled"):
+            await ensure_execution_allowed(settings, geo)
+
+    async def test_geoblock_failure_fails_closed(self, aiohttp_client: AiohttpClientFn) -> None:
+        app = web.Application()  # no geoblock route → 404
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        geo = GeoblockClient(client.session, base_url=str(client.make_url("")))
+        settings = Settings(_env_file=None, mode=Mode.EXECUTION_ENABLED)
+        with pytest.raises(ExecutionDisabledError, match="failing closed"):
+            await ensure_execution_allowed(settings, geo)
+
+    async def test_eligible_passes(self, aiohttp_client: AiohttpClientFn) -> None:
+        client = await aiohttp_client(self.app_with_geoblock(blocked=False))
+        assert client.session is not None
+        geo = GeoblockClient(client.session, base_url=str(client.make_url("")))
+        settings = Settings(_env_file=None, mode=Mode.EXECUTION_ENABLED)
+        await ensure_execution_allowed(settings, geo)  # no raise
+
+
+class TestLiveSmoke:
+    """Live read-only smoke test; requires unrestricted network (VPN/VPS).
+    Run with: uv run pytest -m live"""
+
+    @pytest.mark.live
+    async def test_public_reads(self) -> None:
+        async with aiohttp.ClientSession() as session:
+            kalshi = KalshiRestClient(session)
+            status = await kalshi.get_exchange_status()
+            assert "exchange_active" in status
+            clob = PolymarketClobClient(session)
+            markets = await clob.get_sampling_markets()
+            assert markets["data"]

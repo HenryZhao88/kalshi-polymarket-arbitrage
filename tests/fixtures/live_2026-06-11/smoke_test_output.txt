@@ -1,0 +1,1 @@
+tests/integration/test_clients_rest.py::TestLiveSmoke::test_public_reads PASSED [100%]

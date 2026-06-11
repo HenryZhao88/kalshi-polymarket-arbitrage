@@ -89,13 +89,47 @@ class Venue(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class BookLevel:
-    """One price level of a binary-contract book. Price is a probability in [0, 1]."""
+    """One price level of a binary-contract book.
+
+    Price is a probability in [0, 1]; size is fractional (both venues support
+    fractional contracts/shares — Kalshi `*_fp`, Polymarket decimal sizes).
+    """
 
     price: Decimal
-    size: int
+    size: Decimal
 
     def __post_init__(self) -> None:
+        if not isinstance(self.size, Decimal):  # runtime convenience for int sizes
+            object.__setattr__(self, "size", Decimal(self.size))  # type: ignore[unreachable]
         if not Decimal(0) <= self.price <= Decimal(1):
             raise ValueError(f"price {self.price} outside [0, 1]")
         if self.size < 0:
             raise ValueError(f"size {self.size} is negative")
+
+
+@dataclass(frozen=True, slots=True)
+class OrderBook:
+    """One side's tradable view: bids descending, asks ascending by price."""
+
+    venue: Venue
+    market_id: str
+    side: Side
+    bids: tuple[BookLevel, ...]
+    asks: tuple[BookLevel, ...]
+    timestamp_ms: int | None = None
+
+    def __post_init__(self) -> None:
+        bid_prices = [lvl.price for lvl in self.bids]
+        ask_prices = [lvl.price for lvl in self.asks]
+        if bid_prices != sorted(bid_prices, reverse=True):
+            raise ValueError("bids must be sorted descending by price")
+        if ask_prices != sorted(ask_prices):
+            raise ValueError("asks must be sorted ascending by price")
+
+    @property
+    def best_bid(self) -> BookLevel | None:
+        return self.bids[0] if self.bids else None
+
+    @property
+    def best_ask(self) -> BookLevel | None:
+        return self.asks[0] if self.asks else None

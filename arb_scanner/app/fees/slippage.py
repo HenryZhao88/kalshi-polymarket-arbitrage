@@ -45,11 +45,11 @@ class DepthImpactSlippage:
     def estimate(self, size: int, quoted_edge: Money) -> Money:
         if not self.levels:
             raise ValueError("no depth available")
-        remaining = size
+        remaining = Decimal(size)
         cost = Decimal(0)
         for level in self.levels:
             take = min(remaining, level.size)
-            cost += Decimal(take) * level.price
+            cost += take * level.price
             remaining -= take
             if remaining == 0:
                 break
