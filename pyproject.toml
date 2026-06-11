@@ -1,0 +1,70 @@
+[project]
+name = "arb-scanner"
+version = "0.1.0"
+description = "Cross-venue arbitrage scanner between Kalshi and Polymarket (discovery-only by default)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.10",
+    "websockets>=13.0",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "sqlalchemy[asyncio]>=2.0.35",
+    "aiosqlite>=0.20",
+    "rapidfuzz>=3.10",
+    "tenacity>=9.0",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "plotly>=5.24",
+    "cryptography>=43.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-aiohttp>=1.0",
+    "mypy>=1.13",
+    "ruff>=0.7",
+    "pre-commit>=4.0",
+    "pandas-stubs>=2.2",
+]
+
+[project.scripts]
+arb-scanner = "arb_scanner.app.main:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["arb_scanner"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
+ignore = ["S101"]  # assert allowed: pytest + invariant checks
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106"]  # fake credentials in fixtures
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["plotly.*", "rapidfuzz.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "live: tests that hit real network endpoints (deselect with '-m \"not live\"')",
+]
+addopts = "-m 'not live'"
