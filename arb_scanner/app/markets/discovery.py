@@ -446,6 +446,7 @@ def _rule_facts(
                 else None
             ),
             sports_policy=tuple(str(item) for item in kalshi_excerpt["sports_policy_terms"]),
+            title=str(kalshi_market.get("title") or ""),
         ),
         PolymarketRuleFacts(
             determination_time=poly.resolution_time or poly.end_time,
@@ -458,6 +459,7 @@ def _rule_facts(
             ),
             void_policy=poly_void,
             sports_policy=poly_sports_terms,
+            title=poly.question,
         ),
         kalshi_excerpt,
         poly_excerpt,

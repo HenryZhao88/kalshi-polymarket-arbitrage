@@ -332,6 +332,18 @@ def _candidate_positions(
 def _rejection_bucket(reason: str) -> str:
     lowered = reason.lower()
     for label, fragments in (
+        # Named text-evidence conflicts first: their messages can contain
+        # generic words ("threshold") that would otherwise mis-bucket them.
+        ("continent_scope_conflict", ("continent_scope_conflict",)),
+        ("sports_stage_vs_winner_conflict", ("sports_stage_vs_winner_conflict",)),
+        (
+            "crypto_performance_vs_price_threshold_conflict",
+            ("crypto_performance_vs_price_threshold_conflict",),
+        ),
+        (
+            "stock_close_vs_intramonth_high_conflict",
+            ("stock_close_vs_intramonth_high_conflict",),
+        ),
         ("similarity_below_review_threshold", ("similarity below",)),
         ("determination_time_conflict", ("determination_time", "determination time differs")),
         ("event_date_conflict", ("event_date",)),
@@ -355,18 +367,25 @@ def _primary_rejection_bucket(reasons: tuple[str, ...]) -> str:
     priority = {
         "determination_time_conflict": 0,
         "event_date_conflict": 1,
-        "threshold_conflict": 2,
-        "market_type_conflict": 3,
-        "contract_shape_conflict": 4,
-        "settlement_basis_conflict": 5,
-        "office_level_conflict": 6,
-        "basket_scope_conflict": 7,
-        "outcome_entity_conflict": 8,
-        "resolution_source_conflict": 9,
-        "void_policy_conflict": 10,
-        "sports_policy_conflict": 11,
-        "similarity_below_review_threshold": 12,
-        "other_rule_conflict": 13,
+        # Named text-evidence conflicts outrank the generic threshold and
+        # market-type buckets so the histogram reports the most specific
+        # verified reason.
+        "continent_scope_conflict": 2,
+        "sports_stage_vs_winner_conflict": 3,
+        "crypto_performance_vs_price_threshold_conflict": 4,
+        "stock_close_vs_intramonth_high_conflict": 5,
+        "threshold_conflict": 6,
+        "market_type_conflict": 7,
+        "contract_shape_conflict": 8,
+        "settlement_basis_conflict": 9,
+        "office_level_conflict": 10,
+        "basket_scope_conflict": 11,
+        "outcome_entity_conflict": 12,
+        "resolution_source_conflict": 13,
+        "void_policy_conflict": 14,
+        "sports_policy_conflict": 15,
+        "similarity_below_review_threshold": 16,
+        "other_rule_conflict": 17,
     }
     buckets = {_rejection_bucket(reason) for reason in reasons}
     return min(buckets, key=priority.__getitem__)

@@ -102,6 +102,33 @@ class TestParseFeatures:
             ("Will Bitcoin exceed $70,000?", None, MarketType.CRYPTO_PRICE_THRESHOLD),
             ("Will the Nasdaq exceed 20,000?", None, MarketType.STOCK_INDEX_PRICE_THRESHOLD),
             ("Will temperature exceed 90 degrees?", None, MarketType.WEATHER_THRESHOLD),
+            (
+                "Will at least 2 teams from South America reach the knockout stage "
+                "of the 2026 Men's FIFA World Cup?",
+                None,
+                MarketType.SPORTS_STAGE_COUNT,
+            ),
+            (
+                "Will exactly 3 teams from Europe reach the knockout stage?",
+                "sports",
+                MarketType.SPORTS_STAGE_COUNT,
+            ),
+            (
+                "Will October be the best month for Bitcoin in 2026?",
+                None,
+                MarketType.CRYPTO_MONTHLY_PERFORMANCE,
+            ),
+            (
+                "Which calendar month will see Bitcoin's highest percentage change?",
+                None,
+                MarketType.CRYPTO_MONTHLY_PERFORMANCE,
+            ),
+            # Threshold-by-date phrasing must keep its existing classification.
+            (
+                "Will Bitcoin be above $100000 by October 1, 2026 at 12:00AM ET?",
+                None,
+                MarketType.CRYPTO_PRICE_THRESHOLD,
+            ),
         ],
     )
     def test_market_type_taxonomy(

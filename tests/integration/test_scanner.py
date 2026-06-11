@@ -52,6 +52,25 @@ def test_settlement_basis_conflict_has_its_own_histogram_bucket() -> None:
     )
 
 
+def test_new_named_conflicts_have_their_own_histogram_buckets() -> None:
+    for reason_prefix in (
+        "continent_scope_conflict",
+        "sports_stage_vs_winner_conflict",
+        "crypto_performance_vs_price_threshold_conflict",
+        "stock_close_vs_intramonth_high_conflict",
+    ):
+        reason = f"{reason_prefix}: one venue resolves differently from the other"
+        assert _primary_rejection_bucket((reason,)) == reason_prefix
+        # Named text-evidence conflicts outrank the generic market-type bucket.
+        assert (
+            _primary_rejection_bucket(
+                (reason, "market type crypto_price_threshold (title) != "
+                 "crypto_monthly_performance (title)")
+            )
+            == reason_prefix
+        )
+
+
 def test_office_level_and_basket_scope_have_their_own_histogram_buckets() -> None:
     office = (
         "office_level_conflict: one venue resolves on state legislative chamber "

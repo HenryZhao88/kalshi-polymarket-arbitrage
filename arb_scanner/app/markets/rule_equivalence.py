@@ -175,6 +175,182 @@ def basket_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
     )
 
 
+# Four conflict families verified in the 2026-06-11 5,000-market dry-run
+# (docs/VERIFICATION.md §9). Each detector inspects title + rules text and
+# fires only on one clear, opposing classification per side; anything
+# ambiguous returns None and stays with the conservative checks.
+
+_WORLD_CUP_RE = re.compile(r"\bworld cup\b", re.IGNORECASE)
+_CONTINENT_RE = re.compile(
+    r"\bsouth\s+america\b|\bnorth\s+america\b|\beurope\b|\bafrica\b|\basia\b|\boceania\b",
+    re.IGNORECASE,
+)
+_CONTINENT_COMPLEMENT_RE = re.compile(
+    r"\b(?:other than|not in|outside(?:\s+of)?)\s+"
+    r"((?:south america|north america|europe|africa|asia|oceania)"
+    r"(?:\s*(?:,|or|and)\s*(?:south america|north america|europe|africa|asia|oceania))*)",
+    re.IGNORECASE,
+)
+
+
+def _continents_in(text: str) -> frozenset[str]:
+    return frozenset(
+        " ".join(match.group(0).lower().split()) for match in _CONTINENT_RE.finditer(text)
+    )
+
+
+def _excluded_continents(text: str) -> frozenset[str]:
+    match = _CONTINENT_COMPLEMENT_RE.search(text)
+    return _continents_in(match.group(1)) if match else frozenset()
+
+
+def continent_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect a not-X-or-Y continent complement paired with an excluded continent.
+
+    Example: Kalshi "winner … from any continent other than Europe or South
+    America" vs Polymarket "Will South America win the World Cup". Fires only
+    when exactly one side is a complement and the other names exactly one
+    continent that is inside the complement's exclusion list.
+    """
+    if not (_WORLD_CUP_RE.search(kalshi_text) and _WORLD_CUP_RE.search(poly_text)):
+        return None
+    kalshi_excluded = _excluded_continents(kalshi_text)
+    poly_excluded = _excluded_continents(poly_text)
+    if bool(kalshi_excluded) == bool(poly_excluded):
+        return None
+    excluded = kalshi_excluded or poly_excluded
+    specific_side = poly_text if kalshi_excluded else kalshi_text
+    named = _continents_in(specific_side)
+    if len(named) != 1:
+        return None
+    (continent,) = named
+    if continent not in excluded:
+        return None
+    return (
+        "continent_scope_conflict: one venue resolves on the winner being from "
+        f"any continent other than {', '.join(sorted(excluded))} while the "
+        f"other resolves on {continent} winning "
+        "(verified 2026-06-11, docs/VERIFICATION.md §9)"
+    )
+
+
+_STAGE_COUNT_TEXT_RE = re.compile(
+    r"\bknockout (?:stage|round)\b|\bround of (?:16|32)\b", re.IGNORECASE
+)
+_TEAM_COUNT_TEXT_RE = re.compile(
+    r"\b(?:at least|exactly|more than|fewer than)\b[^.\n]{0,20}\bteams?\b|\bteams? from\b",
+    re.IGNORECASE,
+)
+_TOURNAMENT_WINNER_RE = re.compile(
+    r"\bwin(?:s)?\b[^.\n]{0,80}\bworld cup\b|\bwinner of the\b[^.\n]{0,60}\bworld cup\b|"
+    r"\bcontinent of the country that wins\b",
+    re.IGNORECASE,
+)
+
+
+def sports_stage_vs_winner_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect a knockout-stage team-count market paired with a tournament winner."""
+
+    def is_stage_count(text: str) -> bool:
+        return bool(_STAGE_COUNT_TEXT_RE.search(text)) and bool(_TEAM_COUNT_TEXT_RE.search(text))
+
+    kalshi_stage, poly_stage = is_stage_count(kalshi_text), is_stage_count(poly_text)
+    if kalshi_stage == poly_stage:
+        return None
+    winner_side = poly_text if kalshi_stage else kalshi_text
+    if _STAGE_COUNT_TEXT_RE.search(winner_side):
+        return None  # ambiguous: stage language on the would-be winner side
+    if not _TOURNAMENT_WINNER_RE.search(winner_side):
+        return None
+    return (
+        "sports_stage_vs_winner_conflict: one venue counts teams reaching the "
+        "knockout stage while the other resolves on the tournament winner "
+        "(verified 2026-06-11, docs/VERIFICATION.md §9)"
+    )
+
+
+_CRYPTO_ASSET_RE = re.compile(r"\b(?:bitcoin|btc|ethereum|eth|solana|sol)\b", re.IGNORECASE)
+_CRYPTO_BEST_MONTH_RE = re.compile(
+    r"\bbest(?:[- ]performing)? month\b|\bhighest percentage change\b|"
+    r"\bmonthly candle\b|\bmonthly performance\b|\bworst month\b",
+    re.IGNORECASE,
+)
+_PRICE_THRESHOLD_TEXT_RE = re.compile(
+    r"\b(?:above|below|exceed(?:s|ed)?|at or above|at or below)\b[^.\n]{0,40}\$?\d[\d,]{2,}",
+    re.IGNORECASE,
+)
+
+
+def crypto_performance_vs_price_threshold_conflict(
+    kalshi_text: str, poly_text: str
+) -> str | None:
+    """Detect a crypto price-threshold market paired with a best-month market.
+
+    A month name alone never fires: the performance side must show explicit
+    best-month/percentage-change/monthly-candle language, and the other side
+    an explicit price threshold.
+    """
+    if not (_CRYPTO_ASSET_RE.search(kalshi_text) and _CRYPTO_ASSET_RE.search(poly_text)):
+        return None
+    kalshi_perf = bool(_CRYPTO_BEST_MONTH_RE.search(kalshi_text))
+    poly_perf = bool(_CRYPTO_BEST_MONTH_RE.search(poly_text))
+    if kalshi_perf == poly_perf:
+        return None
+    threshold_side = poly_text if kalshi_perf else kalshi_text
+    if not _PRICE_THRESHOLD_TEXT_RE.search(threshold_side):
+        return None
+    return (
+        "crypto_performance_vs_price_threshold_conflict: one venue resolves on "
+        "relative monthly performance while the other resolves on a fixed "
+        "price threshold (verified 2026-06-11, docs/VERIFICATION.md §9)"
+    )
+
+
+_STOCK_INDEX_TEXT_RE = re.compile(
+    r"\b(?:s\s*&\s*p\s*500|spx|nasdaq(?:[- ]?100)?|ndx|dow(?:\s+jones)?|djia|"
+    r"russell\s*2000)\b",
+    re.IGNORECASE,
+)
+_INTRAMONTH_HIGH_RE = re.compile(
+    r"\bhit\b[^.\n]{0,40}\(?\s*high\s*\)?|\bat any point\b|"
+    r"\bany 1[- ]minute candle\b|\bintra[- ]?month high\b",
+    re.IGNORECASE,
+)
+_FIXED_CLOSE_RE = re.compile(
+    r"\bclos(?:e|es|ing)\b|\bfinal trading day\b|\bfinal day of trading\b|"
+    r"\bend of (?:the )?day\b|\beod\b|\bindex value on\b|\bat \d{1,2}(?::\d{2})?\s?[ap]m\b",
+    re.IGNORECASE,
+)
+
+
+def stock_close_vs_intramonth_high_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect a fixed date/close index threshold paired with an intramonth high.
+
+    Intramonth-high language takes priority when classifying a side ("at any
+    point … market close on the final day" is a high market, not a close
+    market), so close-vs-close and high-vs-high pairs always fall through.
+    """
+    if not (_STOCK_INDEX_TEXT_RE.search(kalshi_text) and _STOCK_INDEX_TEXT_RE.search(poly_text)):
+        return None
+
+    def classify(text: str) -> str | None:
+        if _INTRAMONTH_HIGH_RE.search(text):
+            return "intramonth_high"
+        if _FIXED_CLOSE_RE.search(text):
+            return "fixed_close"
+        return None
+
+    kalshi_kind, poly_kind = classify(kalshi_text), classify(poly_text)
+    if kalshi_kind is None or poly_kind is None or kalshi_kind == poly_kind:
+        return None
+    return (
+        "stock_close_vs_intramonth_high_conflict: one venue resolves on a "
+        "fixed date/time index value while the other resolves on the index "
+        "trading through a level at any point in the month "
+        "(verified 2026-06-11, docs/VERIFICATION.md §9)"
+    )
+
+
 class MatchStatus(StrEnum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
@@ -190,6 +366,9 @@ class KalshiRuleFacts:
     is_sports: bool
     void_policy: str | None
     sports_policy: tuple[str, ...] = ()
+    # Market title: some structured conflicts (continent scope, stage count,
+    # crypto month, intramonth high) are only visible in the question text.
+    title: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +381,7 @@ class PolymarketRuleFacts:
     game_start_time: datetime | None
     void_policy: str | None
     sports_policy: tuple[str, ...] = ()
+    title: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,10 +421,24 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         missing.append("resolution_text")
 
     # Structured text-evidence conflicts verified against live venue rules
-    # (docs/VERIFICATION.md §7–8) — each detection is a hard failure. These
+    # (docs/VERIFICATION.md §7–9) — each detection is a hard failure. These
     # only ever reject; ambiguous text falls through to the warnings above.
     for detect in (settlement_basis_conflict, office_level_conflict, basket_scope_conflict):
         conflict = detect(kalshi.resolution_text, poly.resolution_text)
+        if conflict:
+            failures.append(conflict)
+    # These four read titles too: the distinguishing language (continent
+    # complement, team counts, best-month, intramonth high) often appears
+    # only in the question text.
+    kalshi_combined = f"{kalshi.title}\n{kalshi.resolution_text}"
+    poly_combined = f"{poly.title}\n{poly.resolution_text}"
+    for detect in (
+        continent_scope_conflict,
+        sports_stage_vs_winner_conflict,
+        crypto_performance_vs_price_threshold_conflict,
+        stock_close_vs_intramonth_high_conflict,
+    ):
+        conflict = detect(kalshi_combined, poly_combined)
         if conflict:
             failures.append(conflict)
 

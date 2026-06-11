@@ -426,3 +426,66 @@ can never accept a pair; acceptance thresholds are unchanged):
   toward the chain), and zero-state texts never fire.
 
 Both surface as named buckets in the scan rejection histogram.
+
+## 9. 5,000-market dry-run: four contract-shape conflict families (2026-06-11)
+
+A wider window (`ARB_POLYMARKET_MAX_MARKETS=5000`, `ARB_POLYMARKET_MAX_PAGES=50`,
+alerts off) produced:
+
+- Kalshi discovered=65183 scannable=65181
+- Polymarket discovered=5000 scannable=4945
+- raw_title=38270, structured=1321
+- manual_review=17, accepted=0, rejected=38253
+
+The 17 manual-review rows exposed four false-positive families, all **not
+equivalent**:
+
+1. **World Cup continent complement vs specific continent winner.** Kalshi
+   `KXWCNOEURSA-26-Y` — *"any country not in Europe or South America wins"* —
+   vs Polymarket *"Will South America win the 2026 FIFA World Cup?"*. A
+   not-X-or-Y complement contract is the opposite side of, not the same bet
+   as, one of its excluded continents.
+2. **World Cup knockout-stage regional team count vs continent winner.**
+   Kalshi `KXWCREGIONKO-26SA-1…6` — *"at least/exactly N teams from South
+   America reach the knockout stage"* — vs the same Polymarket continent-
+   winner market. Counting group-stage survivors is not the tournament
+   winner.
+3. **Crypto price threshold vs best-month performance.** Kalshi
+   `KXBTCMAX100-26-SEP/JUNE` — *"Bitcoin above $100000 by <date>"* — vs
+   Polymarket *"Will <month> be the best month for Bitcoin in 2026?"*
+   (relative monthly percentage change).
+4. **Stock fixed-date close threshold vs intramonth high.** Kalshi
+   `KXINXDIRY-26DEC31H1600-T8200` — *"index value on Dec 31, 2026 at 4pm
+   EST"* — vs Polymarket *"hit $8,200 (HIGH) in December"* (*"at any point …
+   any 1-minute candle"*). A touch/high contract pays in strictly more worlds
+   than a fixed-time close contract.
+
+Encoded in `rule_equivalence.py` as four narrow **rejection-only** detectors
+(they can never accept a pair; acceptance thresholds are unchanged), each
+reading title + rules text and requiring one clear, opposing classification
+per side — anything ambiguous falls through to the existing conservative
+checks:
+
+- `continent_scope_conflict`: needs World Cup context on both sides, a
+  complement ("other than / not in / outside X or Y") on exactly one side,
+  and exactly one named continent inside the exclusion set on the other.
+  Same-continent winner pairs (e.g. `KXWCCONTINENT-26-SA` vs "South America
+  wins") never fire and stay manual_review.
+- `sports_stage_vs_winner_conflict`: knockout-stage + team-count language on
+  exactly one side, tournament-winner language (and no stage language) on the
+  other.
+- `crypto_performance_vs_price_threshold_conflict`: crypto asset on both
+  sides; best-month/highest-percentage-change/monthly-candle language on
+  exactly one side, an explicit price threshold on the other. A month name
+  alone is never performance evidence.
+- `stock_close_vs_intramonth_high_conflict`: index context on both sides;
+  intramonth-high language (hit-HIGH / at any point / 1-minute candle) takes
+  classification priority, so *"market close on the final day"* inside an
+  any-point sentence still classifies as a high market. Kalshi fixed-date
+  close vs Polymarket *"closes over X on the final trading day"* never fires
+  and stays manual_review (sources/void still unverified).
+
+Parser improvements in the same pass: `sports_stage_count` and
+`crypto_monthly_performance` market types, so these shapes also surface as
+structured market-type evidence. All four conflicts have named rejection
+histogram buckets, ranked above the generic threshold/market-type buckets.

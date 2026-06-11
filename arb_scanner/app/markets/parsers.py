@@ -92,6 +92,22 @@ _SPORTS_HINT_RE = re.compile(
     r"champion(?:ship)?|cup|league|cricket|fc|usl|nfl|nba|nhl|mlb|mls|wnba|ncaa)\b",
     re.I,
 )
+# Tournament stage team-count contracts ("at least N teams from X reach the
+# knockout stage") are a different bet from any winner/moneyline contract.
+_STAGE_COUNT_RE = re.compile(
+    r"\bknockout (?:stage|round)\b|\bround of (?:16|32)\b", re.I
+)
+_TEAM_COUNT_RE = re.compile(
+    r"\b(?:at least|exactly|more than|fewer than)\b[^.\n]{0,20}\bteams?\b|\bteams? from\b",
+    re.I,
+)
+# Crypto best-month / monthly-performance contracts resolve on relative
+# monthly returns, never on a price threshold.
+_CRYPTO_MONTHLY_RE = re.compile(
+    r"\bbest(?:[- ]performing)? month\b|\bhighest percentage change\b|"
+    r"\bmonthly candle\b|\bmonthly performance\b|\bworst month\b",
+    re.I,
+)
 
 
 # Full state names only (no abbreviations): used to count distinct state
@@ -133,8 +149,10 @@ class MarketType(StrEnum):
     SPORTS_MONEYLINE = "sports_moneyline"
     SPORTS_SPREAD = "sports_spread"
     SPORTS_TOTAL = "sports_total"
+    SPORTS_STAGE_COUNT = "sports_stage_count"
     CRYPTO_PRICE_THRESHOLD = "crypto_price_threshold"
     CRYPTO_EXACT_PRICE = "crypto_exact_price"
+    CRYPTO_MONTHLY_PERFORMANCE = "crypto_monthly_performance"
     STOCK_INDEX_PRICE_THRESHOLD = "stock_index_price_threshold"
     STOCK_INDEX_EXACT_PRICE = "stock_index_exact_price"
     WEATHER_THRESHOLD = "weather_threshold"
@@ -271,6 +289,8 @@ def infer_market_type(
         value = MarketType.MARGIN_SPREAD
     elif re.search(r"\b(confirmed|confirmation|appointed|appointment|office holder)\b", lowered):
         value = MarketType.OFFICE_HOLDER
+    elif is_sports and _STAGE_COUNT_RE.search(lowered) and _TEAM_COUNT_RE.search(lowered):
+        value = MarketType.SPORTS_STAGE_COUNT
     elif is_sports and re.search(r"\b(spread|cover|handicap|win by)\b", lowered):
         value = MarketType.SPORTS_SPREAD
     elif (
@@ -281,6 +301,8 @@ def infer_market_type(
         value = MarketType.SPORTS_TOTAL
     elif is_sports and re.search(r"\b(win|wins|beat|moneyline)\b", lowered):
         value = MarketType.SPORTS_MONEYLINE
+    elif _CRYPTO_RE.search(text) and _CRYPTO_MONTHLY_RE.search(lowered):
+        value = MarketType.CRYPTO_MONTHLY_PERFORMANCE
     elif _CRYPTO_RE.search(text) and re.search(r"\b(exact(?:ly)?|equal to|close at)\b", lowered):
         value = MarketType.CRYPTO_EXACT_PRICE
     elif _CRYPTO_RE.search(text) and extract_strike(text) is not None:

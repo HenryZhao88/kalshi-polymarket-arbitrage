@@ -11,9 +11,13 @@ from arb_scanner.app.markets.rule_equivalence import (
     MatchStatus,
     PolymarketRuleFacts,
     basket_scope_conflict,
+    continent_scope_conflict,
+    crypto_performance_vs_price_threshold_conflict,
     decide_status,
     office_level_conflict,
     settlement_basis_conflict,
+    sports_stage_vs_winner_conflict,
+    stock_close_vs_intramonth_high_conflict,
     validate_rules,
 )
 
@@ -335,6 +339,265 @@ class TestBasketScopeConflict:
             "race. Unlike the market for Georgia this market has no run-off clause."
         )
         assert basket_scope_conflict(comparison, POLY_NC_SENATE_RULES) is None
+
+
+# Live title + rules text from the 2026-06-11 5,000-market dry-run
+# (docs/VERIFICATION.md §9). The detectors receive title and rules combined.
+KALSHI_CONTINENT_COMPLEMENT = (
+    "Will the winner of the 2026 Men's FIFA World Cup be from any continent "
+    "other than Europe or South America?\n"
+    "If any country not in Europe or South America wins the 2026 Men's FIFA "
+    "World Cup, then the market resolves to Yes."
+)
+POLY_SA_WINS_WC = (
+    "Will South America win the 2026 FIFA World Cup?\n"
+    "This market will resolve to the continent of the country that wins the "
+    "2026 FIFA World Cup."
+)
+KALSHI_KNOCKOUT_COUNT = (
+    "Will at least 2 teams from South America reach the knockout stage of the "
+    "2026 Men's FIFA World Cup?\n"
+    "If at least 2 teams from South America reach the knockout stage of the "
+    "2026 Men's FIFA World Cup, then the market resolves to Yes."
+)
+KALSHI_BTC_THRESHOLD = (
+    "Will Bitcoin be above $100000 by October 1, 2026 at 12:00AM ET?\n"
+    "If the price of Bitcoin is above $100,000 at any point before October 1, "
+    "2026 at 12:00 AM ET, then the market resolves to Yes."
+)
+POLY_BTC_BEST_MONTH = (
+    "Will October be the best month for Bitcoin in 2026?\n"
+    "This market will resolve to the calendar month during which Bitcoin has "
+    "the highest percentage change in 2026."
+)
+KALSHI_SPX_CLOSE = (
+    "Will the S&P 500 be above 8200 on Dec 31, 2026 at 4pm EST?\n"
+    "If the S&P 500 index value on Dec 31, 2026 at 4pm EST is above 8200, "
+    "then the market resolves to Yes."
+)
+POLY_SPX_HIGH = (
+    "Will S&P 500 (SPX) hit $8,200 (HIGH) in December?\n"
+    "This market will resolve to Yes if, at any point between market creation "
+    "and market close on the final day of trading for December 2026, any "
+    "1-minute candle trades at or above 8,200."
+)
+POLY_SPX_FINAL_CLOSE = (
+    "Will the S&P 500 close over 8,200 in December 2026?\n"
+    "This market will resolve to Yes if the S&P 500 closes over 8,200 on the "
+    "final trading day of December 2026."
+)
+
+
+class TestContinentScopeConflict:
+    def test_complement_vs_excluded_continent_is_rejected(self) -> None:
+        message = continent_scope_conflict(KALSHI_CONTINENT_COMPLEMENT, POLY_SA_WINS_WC)
+        assert message is not None
+        assert "continent_scope_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_CONTINENT_COMPLEMENT,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_SA_WINS_WC,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("continent_scope_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_fires_in_either_direction(self) -> None:
+        assert continent_scope_conflict(POLY_SA_WINS_WC, KALSHI_CONTINENT_COMPLEMENT) is not None
+
+    def test_same_continent_winner_pair_is_not_rejected(self) -> None:
+        kalshi_sa = (
+            "Will the winner of the 2026 Men's FIFA World Cup be from South "
+            "America (CONMEBOL)?\nIf a country from South America wins the 2026 "
+            "Men's FIFA World Cup, then the market resolves to Yes."
+        )
+        assert continent_scope_conflict(kalshi_sa, POLY_SA_WINS_WC) is None
+
+    def test_non_excluded_continent_falls_through(self) -> None:
+        poly_africa = POLY_SA_WINS_WC.replace("South America", "Africa")
+        assert continent_scope_conflict(KALSHI_CONTINENT_COMPLEMENT, poly_africa) is None
+
+    def test_complement_vs_complement_falls_through(self) -> None:
+        assert (
+            continent_scope_conflict(KALSHI_CONTINENT_COMPLEMENT, KALSHI_CONTINENT_COMPLEMENT)
+            is None
+        )
+
+    def test_requires_world_cup_context(self) -> None:
+        no_wc = "Will the winner be from any continent other than Europe or South America?"
+        assert continent_scope_conflict(no_wc, POLY_SA_WINS_WC) is None
+
+
+class TestSportsStageVsWinnerConflict:
+    def test_knockout_count_vs_winner_is_rejected(self) -> None:
+        message = sports_stage_vs_winner_conflict(KALSHI_KNOCKOUT_COUNT, POLY_SA_WINS_WC)
+        assert message is not None
+        assert "sports_stage_vs_winner_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_KNOCKOUT_COUNT,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_SA_WINS_WC,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("sports_stage_vs_winner_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_fires_in_either_direction(self) -> None:
+        assert sports_stage_vs_winner_conflict(POLY_SA_WINS_WC, KALSHI_KNOCKOUT_COUNT) is not None
+
+    def test_stage_count_vs_stage_count_is_not_rejected(self) -> None:
+        assert sports_stage_vs_winner_conflict(KALSHI_KNOCKOUT_COUNT, KALSHI_KNOCKOUT_COUNT) is None
+
+    def test_winner_vs_winner_is_not_rejected(self) -> None:
+        assert sports_stage_vs_winner_conflict(POLY_SA_WINS_WC, POLY_SA_WINS_WC) is None
+
+    def test_stage_language_on_winner_side_is_ambiguous(self) -> None:
+        mixed = POLY_SA_WINS_WC + "\nTeams eliminated before the knockout stage do not count."
+        assert sports_stage_vs_winner_conflict(KALSHI_KNOCKOUT_COUNT, mixed) is None
+
+
+class TestCryptoPerformanceVsPriceThresholdConflict:
+    def test_threshold_vs_best_month_is_rejected(self) -> None:
+        message = crypto_performance_vs_price_threshold_conflict(
+            KALSHI_BTC_THRESHOLD, POLY_BTC_BEST_MONTH
+        )
+        assert message is not None
+        assert "crypto_performance_vs_price_threshold_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_BTC_THRESHOLD,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_BTC_BEST_MONTH,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any(
+            "crypto_performance_vs_price_threshold_conflict" in f for f in result.hard_failures
+        )
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_fires_in_either_direction(self) -> None:
+        assert (
+            crypto_performance_vs_price_threshold_conflict(
+                POLY_BTC_BEST_MONTH, KALSHI_BTC_THRESHOLD
+            )
+            is not None
+        )
+
+    def test_threshold_vs_same_threshold_is_not_rejected(self) -> None:
+        assert (
+            crypto_performance_vs_price_threshold_conflict(
+                KALSHI_BTC_THRESHOLD, KALSHI_BTC_THRESHOLD
+            )
+            is None
+        )
+
+    def test_month_name_alone_is_not_performance_language(self) -> None:
+        poly_october = (
+            "Will Bitcoin trade above $100,000 in October?\nResolves to Yes if "
+            "Bitcoin trades above $100,000 at any point in October 2026."
+        )
+        assert (
+            crypto_performance_vs_price_threshold_conflict(KALSHI_BTC_THRESHOLD, poly_october)
+            is None
+        )
+
+    def test_requires_crypto_asset_on_both_sides(self) -> None:
+        non_crypto = "Will October be the best month for the S&P 500 in 2026?"
+        assert (
+            crypto_performance_vs_price_threshold_conflict(KALSHI_BTC_THRESHOLD, non_crypto)
+            is None
+        )
+
+
+class TestStockCloseVsIntramonthHighConflict:
+    def test_fixed_close_vs_intramonth_high_is_rejected(self) -> None:
+        message = stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, POLY_SPX_HIGH)
+        assert message is not None
+        assert "stock_close_vs_intramonth_high_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_SPX_CLOSE,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_SPX_HIGH,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any(
+            "stock_close_vs_intramonth_high_conflict" in f for f in result.hard_failures
+        )
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_fires_in_either_direction(self) -> None:
+        assert stock_close_vs_intramonth_high_conflict(POLY_SPX_HIGH, KALSHI_SPX_CLOSE) is not None
+
+    def test_fixed_close_vs_final_trading_day_close_is_not_rejected(self) -> None:
+        # The potentially equivalent family from the scan: must stay
+        # manual_review for source/void verification, not be high-rejected.
+        assert (
+            stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, POLY_SPX_FINAL_CLOSE)
+            is None
+        )
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_SPX_CLOSE,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_SPX_FINAL_CLOSE,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert result.hard_failures == ()
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_high_vs_high_is_not_rejected(self) -> None:
+        assert stock_close_vs_intramonth_high_conflict(POLY_SPX_HIGH, POLY_SPX_HIGH) is None
+
+    def test_close_vs_close_is_not_rejected(self) -> None:
+        assert (
+            stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, KALSHI_SPX_CLOSE) is None
+        )
+
+    def test_requires_index_context_on_both_sides(self) -> None:
+        no_index = "Will the value hit $8,200 (HIGH) in December at any point?"
+        assert stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, no_index) is None
+
+    def test_unclassifiable_side_falls_through(self) -> None:
+        vague = "Will the S&P 500 be above 8,200 in December 2026?"
+        assert stock_close_vs_intramonth_high_conflict(vague, POLY_SPX_HIGH) is None
 
 
 class TestDecideStatus:

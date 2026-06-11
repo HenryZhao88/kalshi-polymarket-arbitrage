@@ -547,6 +547,64 @@ class TestEvaluatePairEndToEnd:
         assert not any("settlement_basis_conflict" in reason for reason in pair.status_reasons)
         assert pair.status is not MatchStatus.ACCEPTED  # still missing rule facts
 
+    def test_crypto_threshold_vs_best_month_is_rejected_end_to_end(self) -> None:
+        # The distinguishing language lives in the titles, so this proves the
+        # titles reach the rule-equivalence detectors through discovery.
+        kalshi = {
+            "ticker": "KXBTCMAX100-26-SEP",
+            "title": "Will Bitcoin be above $100000 by October 1, 2026 at 12:00AM ET?",
+            "expected_expiration_time": "2026-10-01T04:00:00Z",
+            "rules_primary": (
+                "If the price of Bitcoin is above $100,000 before October 1, 2026 "
+                "at 12:00 AM ET, then the market resolves to Yes."
+            ),
+        }
+        poly = {
+            "conditionId": "0xbestmonth",
+            "question": "Will October be the best month for Bitcoin in 2026?",
+            "clobTokenIds": '["111", "222"]',
+            "description": (
+                "This market will resolve to the calendar month during which "
+                "Bitcoin has the highest percentage change in 2026."
+            ),
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.REJECTED
+        assert any(
+            "crypto_performance_vs_price_threshold_conflict" in reason
+            for reason in pair.status_reasons
+        )
+
+    def test_knockout_stage_count_vs_world_cup_winner_is_rejected_end_to_end(self) -> None:
+        kalshi = {
+            "ticker": "KXWCREGIONKO-26SA-2",
+            "title": (
+                "Will at least 2 teams from South America reach the knockout "
+                "stage of the 2026 Men's FIFA World Cup?"
+            ),
+            "expected_expiration_time": "2026-07-19T22:00:00Z",
+            "rules_primary": (
+                "If at least 2 teams from South America reach the knockout stage "
+                "of the 2026 Men's FIFA World Cup, then the market resolves to Yes."
+            ),
+        }
+        poly = {
+            "conditionId": "0xsawins",
+            "question": "Will South America win the 2026 FIFA World Cup?",
+            "clobTokenIds": '["111", "222"]',
+            "description": (
+                "This market will resolve to the continent of the country that "
+                "wins the 2026 FIFA World Cup."
+            ),
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.REJECTED
+        assert any(
+            "sports_stage_vs_winner_conflict" in reason for reason in pair.status_reasons
+        )
+
     def test_title_match_but_missing_rules_is_manual_review(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")
