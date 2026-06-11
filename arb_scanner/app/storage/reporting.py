@@ -1,15 +1,32 @@
-"""Human-readable reports for persisted matching diagnostics."""
+"""Human-readable and machine-readable reports for persisted diagnostics.
+
+All report modes (text, csv, json, verification packet) render the same
+sorted record order, are labeled NOT TRADE SAFE for non-accepted rows, and
+never claim arbitrage or profitability.
+"""
 
 from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
+
+from sqlalchemy import func, select
 
 from arb_scanner.app.markets.discovery import ManualReviewSort, diagnostic_sort_key
 from arb_scanner.app.storage.engine import init_models, make_engine, make_session_factory
-from arb_scanner.app.storage.models import MatchedPairRow
-from arb_scanner.app.storage.repo import PairRepo
+from arb_scanner.app.storage.export import (
+    pair_record,
+    render_csv,
+    render_json,
+    render_verification_packet,
+)
+from arb_scanner.app.storage.models import BookSnapshotRow, MatchedPairRow, OpportunityRow
+from arb_scanner.app.storage.repo import PairRepo, SqlAlchemyScanStore
+
+REPORT_FORMATS: tuple[str, ...] = ("text", "csv", "json")
 
 
 def _details(row: MatchedPairRow) -> dict[str, Any]:
@@ -33,12 +50,18 @@ def render_pair_row(row: MatchedPairRow) -> list[str]:
     hypothetical = details.get("hypothetical_economics")
     kalshi_type = details.get("kalshi_market_type")
     poly_type = details.get("poly_market_type")
+    record = pair_record(row)
     return [
         f"{row.status.upper()} | confidence={row.confidence:.4f} | NOT TRADE SAFE"
         if row.status != "accepted"
         else f"ACCEPTED | confidence={row.confidence:.4f}",
         f"  Kalshi: {row.kalshi_ticker} | {details.get('kalshi_title', '')}",
         f"  Polymarket: {row.poly_condition_id} | {details.get('poly_question', '')}",
+        (
+            f"  source ids: Kalshi event={record['kalshi_event_ticker'] or 'unknown'} | "
+            f"Polymarket slug={record['polymarket_slug'] or 'unknown'} "
+            f"url={record['polymarket_url'] or 'not derivable'}"
+        ),
         f"  matched tokens: {', '.join(str(item) for item in matched_tokens) or 'none'}",
         f"  market types: Kalshi={kalshi_type} | Polymarket={poly_type}",
         (
@@ -63,6 +86,13 @@ def render_pair_row(row: MatchedPairRow) -> list[str]:
         ),
         f"  mismatched fields: {mismatches or 'none'}",
         f"  missing rule fields: {', '.join(str(item) for item in missing) or 'none'}",
+        (
+            "  verify manually: "
+            + (
+                ", ".join(name for name in record if name.startswith("needs_") and record[name])
+                or "nothing flagged"
+            )
+        ),
         f"  reasons: {'; '.join(str(item) for item in reasons) or 'none'}",
         (
             f"  times: Kalshi close={kalshi.get('close_time')} "
@@ -91,6 +121,23 @@ def render_pair_row(row: MatchedPairRow) -> list[str]:
     ]
 
 
+def _row_sort_key(row: MatchedPairRow, sort: ManualReviewSort) -> tuple[Any, ...]:
+    details = row.matched_fields
+    return diagnostic_sort_key(
+        mode=sort,
+        confidence=row.confidence,
+        missing_fields=details.get("missing_rule_fields") or [],
+        category=details.get("category"),
+        event_dates=(
+            details.get("kalshi_event_date"),
+            details.get("poly_event_date"),
+        ),
+        hypothetical_economics=details.get("hypothetical_economics"),
+        market_type=details.get("kalshi_market_type") or details.get("poly_market_type"),
+        fee_confidence=details.get("fee_confidence"),
+    )
+
+
 async def load_diagnostic_rows(
     database_url: str,
     *,
@@ -106,29 +153,39 @@ async def load_diagnostic_rows(
             repo = PairRepo(session)
             if mode == "latest":
                 return await repo.list_latest_scan(limit=limit)
-            if mode == "manual_review":
-                rows = await repo.list_latest_scan(
-                    status="manual_review", limit=max(1000, limit * 100)
-                )
-                return sorted(
-                    rows,
-                    key=lambda row: diagnostic_sort_key(
-                        mode=sort,
-                        confidence=row.confidence,
-                        missing_fields=row.matched_fields.get("missing_rule_fields") or [],
-                        category=row.matched_fields.get("category"),
-                        event_dates=(
-                            row.matched_fields.get("kalshi_event_date"),
-                            row.matched_fields.get("poly_event_date"),
-                        ),
-                        hypothetical_economics=row.matched_fields.get("hypothetical_economics"),
-                    ),
-                )[:limit]
-            if mode == "rejected":
-                return await repo.list_latest_scan(status="rejected", limit=limit)
+            if mode in ("manual_review", "rejected"):
+                status = "manual_review" if mode == "manual_review" else "rejected"
+                rows = await repo.list_latest_scan(status=status, limit=max(1000, limit * 100))
+                # sorted() is stable, so equal keys keep recency order.
+                return sorted(rows, key=lambda row: _row_sort_key(row, sort))[:limit]
             raise ValueError(f"unknown diagnostic report mode {mode!r}")
     finally:
         await engine.dispose()
+
+
+def _render_report(
+    rows: list[MatchedPairRow],
+    *,
+    mode: str,
+    sort: ManualReviewSort,
+    fmt: str,
+    verification_packet: bool,
+) -> str:
+    records = [pair_record(row) for row in rows]
+    if verification_packet:
+        return "\n".join(render_verification_packet(records)) + "\n"
+    if fmt == "csv":
+        return render_csv(records)
+    if fmt == "json":
+        return render_json(records, mode=mode, sort=sort.value)
+    statuses = Counter(row.status for row in rows)
+    lines = [
+        f"persisted candidate report: mode={mode} sort={sort.value} rows={len(rows)} "
+        + " ".join(f"{status}={count}" for status, count in sorted(statuses.items()))
+    ]
+    for row in rows:
+        lines.extend(render_pair_row(row))
+    return "\n".join(lines) + "\n"
 
 
 def run_diagnostic_report(
@@ -137,17 +194,58 @@ def run_diagnostic_report(
     mode: str,
     limit: int,
     sort: ManualReviewSort = ManualReviewSort.SIMILARITY,
+    fmt: str = "text",
+    output: str | None = None,
+    verification_packet: bool = False,
 ) -> int:
+    if fmt not in REPORT_FORMATS:
+        raise ValueError(f"unknown report format {fmt!r}")
     rows = asyncio.run(load_diagnostic_rows(database_url, mode=mode, limit=limit, sort=sort))
     if not rows:
         print(f"no persisted {mode.replace('_', '-')} candidates")
         return 1
-    statuses = Counter(row.status for row in rows)
-    print(
-        f"persisted candidate report: mode={mode} sort={sort.value} rows={len(rows)} "
-        + " ".join(f"{status}={count}" for status, count in sorted(statuses.items()))
+    rendered = _render_report(
+        rows, mode=mode, sort=sort, fmt=fmt, verification_packet=verification_packet
     )
-    for row in rows:
-        for line in render_pair_row(row):
-            print(line)
+    if output is None:
+        print(rendered, end="")
+        return 0
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(rendered, encoding="utf-8")
+    kind = "verification-packet" if verification_packet else fmt
+    print(f"wrote {len(rows)} {mode.replace('_', '-')} row(s) to {path} (format={kind})")
+    return 0
+
+
+async def _cleanup_retention(database_url: str, *, retention_days: int) -> dict[str, int]:
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    engine = make_engine(database_url)
+    await init_models(engine)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as session:
+            counts: dict[str, int] = {}
+            for name, model, column in (
+                ("matched_pairs", MatchedPairRow, MatchedPairRow.created_at),
+                ("book_snapshots", BookSnapshotRow, BookSnapshotRow.captured_at),
+                ("opportunities", OpportunityRow, OpportunityRow.created_at),
+            ):
+                result = await session.execute(
+                    select(func.count()).select_from(model).where(column < cutoff)
+                )
+                counts[name] = int(result.scalar_one())
+            store = SqlAlchemyScanStore(session)
+            await store.apply_retention(cutoff)
+            await session.commit()
+            return counts
+    finally:
+        await engine.dispose()
+
+
+def run_retention_cleanup(database_url: str, *, retention_days: int) -> int:
+    """Delete rows older than the retention window and report what was removed."""
+    counts = asyncio.run(_cleanup_retention(database_url, retention_days=retention_days))
+    summary = " ".join(f"{name}={count}" for name, count in sorted(counts.items()))
+    print(f"retention cleanup: removed rows older than {retention_days}d -> {summary}")
     return 0

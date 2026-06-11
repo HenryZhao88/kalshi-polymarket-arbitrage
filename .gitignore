@@ -11,3 +11,6 @@ dist/
 *.sqlite3
 .DS_Store
 reports/
+manual_review.csv
+manual_review.json
+rejections.csv

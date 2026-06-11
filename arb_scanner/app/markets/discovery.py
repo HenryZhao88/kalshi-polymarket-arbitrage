@@ -30,10 +30,22 @@ from arb_scanner.app.markets.tickers import TickerInference, parse_kalshi_ticker
 
 class ManualReviewSort(StrEnum):
     SIMILARITY = "similarity"
+    CONFIDENCE = "confidence"
     HYPOTHETICAL_EDGE = "hypothetical_edge"
     MISSING_FIELDS = "missing_fields"
     CATEGORY = "category"
     EVENT_DATE = "event_date"
+    MARKET_TYPE = "market_type"
+    FEE_CONFIDENCE = "fee_confidence"
+
+
+#: Diagnostic ordering only: better-attested fee sources sort first. Not a
+#: pricing input — fee math still fails closed on anything but venue metadata.
+_FEE_CONFIDENCE_RANK = {
+    "market_metadata": 0,
+    "category_default": 1,
+    "unknown": 2,
+}
 
 
 _VOID_TERMS: tuple[tuple[str, str], ...] = (
@@ -168,6 +180,8 @@ def diagnostic_sort_key(
     category: str | None,
     event_dates: tuple[str | None, str | None],
     hypothetical_economics: dict[str, Any] | None,
+    market_type: str | None = None,
+    fee_confidence: str | None = None,
     today: date | None = None,
 ) -> tuple[Any, ...]:
     if mode is ManualReviewSort.HYPOTHETICAL_EDGE:
@@ -177,6 +191,11 @@ def diagnostic_sort_key(
         return (len(missing_fields), -confidence)
     if mode is ManualReviewSort.CATEGORY:
         return (category or "~unknown", -confidence)
+    if mode is ManualReviewSort.MARKET_TYPE:
+        return (market_type or "~unknown", -confidence)
+    if mode is ManualReviewSort.FEE_CONFIDENCE:
+        rank = _FEE_CONFIDENCE_RANK.get(fee_confidence or "", len(_FEE_CONFIDENCE_RANK))
+        return (rank, -confidence)
     if mode is ManualReviewSort.EVENT_DATE:
         reference = today or datetime.now(UTC).date()
         parsed: list[date] = []
@@ -204,6 +223,11 @@ def sort_manual_review_pairs(pairs: list[MatchedPair], mode: ManualReviewSort) -
                 pair.matched_fields.get("poly_event_date"),
             ),
             hypothetical_economics=pair.hypothetical_economics,
+            market_type=(
+                pair.matched_fields.get("kalshi_market_type")
+                or pair.matched_fields.get("poly_market_type")
+            ),
+            fee_confidence=pair.fee_confidence,
         ),
     )
 
@@ -349,6 +373,7 @@ def _kalshi_excerpt(
     sports_terms = _policy_terms(rules_text, _SPORTS_TERMS)
     return {
         "ticker": str(market.get("ticker") or ""),
+        "event_ticker": str(market.get("event_ticker") or "") or None,
         "title": title,
         "event_date": features.event_date.isoformat() if features.event_date else None,
         "event_year": features.event_year,

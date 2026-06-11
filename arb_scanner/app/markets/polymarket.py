@@ -142,6 +142,8 @@ class PolymarketMarket:
             "market_id": self.market_id,
             "question": self.question,
             "condition_id": self.condition_id,
+            "slug": str(self.raw.get("slug") or "") or None,
+            "event_slug": str(_event_value(self.raw, "slug") or "") or None,
             "token_ids": list(self.token_ids),
             "outcomes": list(self.outcomes),
             "end_time": self.end_time.isoformat() if self.end_time else None,

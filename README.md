@@ -121,16 +121,73 @@ uv run arb-scanner report --out reports/report.html
 Every dry-run prints discovered/scannable venue counts and the raw-title,
 structured, manual-review, accepted, and rejected candidate stages, including a
 rejection-reason histogram. Diagnostic reports read the persisted candidate rows.
-Manual-review sorting supports `similarity`, `hypothetical_edge`, `missing_fields`,
-`category`, and `event_date`. Hypothetical-edge sorting places uncomputed rows last;
-the scanner does not fetch books merely to rank an unsafe pair.
+Manual-review sorting supports `similarity`, `confidence`, `hypothetical_edge`,
+`missing_fields`, `category`, `event_date`, `market_type`, and `fee_confidence`.
+Sorting is stable, tolerates missing values, and applies identically to every
+output format. Hypothetical-edge sorting places uncomputed rows last; the
+scanner does not fetch books merely to rank an unsafe pair.
+
+### Report formats and exports
+
+Diagnostic reports render as `text` (default), `csv`, or `json`, to stdout or to
+a file via `--output`:
+
+```bash
+uv run arb-scanner report --manual-review --limit 50 --sort missing_fields --format csv --output manual_review.csv
+uv run arb-scanner report --manual-review --limit 50 --sort missing_fields --format json --output manual_review.json
+uv run arb-scanner report --rejections --limit 50 --sort similarity --format csv --output rejections.csv
+```
+
+CSV headers are stable and append-only. JSON is structured (lists stay lists,
+checklist booleans stay booleans) with a top-level NOT TRADE SAFE label and
+disclaimer. Exports contain only persisted venue market metadata — never
+credentials or settings. Each record carries venue identifiers (Kalshi ticker
+and event ticker; Polymarket condition id, token ids, slug, and the public
+`polymarket.com/event/<event-slug>` URL when an event slug was captured — no
+public Kalshi URL is derivable from a ticker, so Kalshi rows export identifiers
+only) plus a diagnostic verification checklist (`needs_determination_time`,
+`needs_resolution_source`, `needs_void_policy`, `needs_threshold_confirmation`,
+`needs_event_date_confirmation`, `needs_market_type_confirmation`,
+`needs_fee_confirmation`, `needs_liquidity_confirmation`). Checklist fields are
+research to-dos for a human, **not** acceptance rules — a fully cleared
+checklist does not accept a pair or make it tradeable.
+
+### Verification packet
+
+```bash
+uv run arb-scanner report --manual-review --limit 10 --sort missing_fields --verification-packet
+uv run arb-scanner report --verification-packet --limit 10   # implies --manual-review
+```
+
+The packet is a human-readable research worksheet: every row is labeled NOT
+TRADE SAFE and lists why the pair matched, why it was not accepted, the exact
+unresolved fields blocking acceptance, venue identifiers/URLs, rule-text
+excerpts, and an unchecked verification checklist. It is for manual research
+only and is never a trade recommendation.
+
+### Storage growth and retention
+
+Persisting every raw candidate would grow the database quickly, so raw
+conflict-free low-similarity candidates are not persisted by default
+(`ARB_PERSIST_RAW_CANDIDATES=false`), structured rejections are capped per scan
+(`ARB_STORAGE_MAX_CANDIDATES_PER_SCAN`), and every scan pass prunes rows older
+than `ARB_STORAGE_RETENTION_DAYS`. Manual-review and accepted/rejected summary
+rows persist within those bounds. To prune on demand:
+
+```bash
+uv run arb-scanner report --cleanup-retention
+```
 
 Only `accepted` means the implemented rule checks found affirmative equivalence.
-`manual_review` means required facts are missing and is **NOT TRADE SAFE**. `rejected`
-means known facts conflict or similarity is insufficient. A displayed hypothetical
-edge is diagnostic only; it is not arbitrage, executable economics, or a profit claim.
-An `accepted=0` result is valid fail-closed behavior when no candidate has enough
-affirmative rule evidence. More matches are not preferable to unsafe matches.
+`manual_review` means required facts are missing and is **NOT TRADE SAFE**: the
+pair is plausibly the same event, but determination time, resolution source,
+void policy, or other rule facts are unverified, so it is a research lead — not
+a profitable arbitrage claim. `rejected` means known facts conflict or
+similarity is insufficient. A displayed hypothetical edge is diagnostic only;
+it is not arbitrage, executable economics, or a profit claim. An `accepted=0`
+result is valid fail-closed behavior when no candidate has enough affirmative
+rule evidence — it is the correct and safe outcome, not a defect. More matches
+are not preferable to unsafe matches.
 
 `replay` and `report` require complete paired snapshots produced by a persisted scan.
 Legacy isolated order-book rows fail with an actionable message.
@@ -156,5 +213,6 @@ docker compose logs -f scanner
 Docker runs the same discovery loop with persistent SQLite storage. Configure all
 required cost assumptions explicitly before interpreting an evaluation as complete.
 
-See `SPEC.md` for the original target specification and `docs/VERIFICATION.md` for
-source/API verification and current implementation caveats.
+See `SPEC.md` for the original target specification, `docs/VERIFICATION.md` for
+source/API verification and current implementation caveats, and `docs/examples/`
+for real dry-run, CSV-export, and verification-packet output samples.

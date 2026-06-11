@@ -226,6 +226,30 @@ def cli(argv: list[str] | None = None) -> int:
         default=ManualReviewSort.SIMILARITY.value,
         help="ranking for manual-review reports",
     )
+    report.add_argument(
+        "--format",
+        dest="report_format",
+        choices=["text", "csv", "json"],
+        default="text",
+        help="diagnostic report output format (default: text)",
+    )
+    report.add_argument(
+        "--output",
+        default=None,
+        metavar="PATH",
+        help="write the report to a file instead of stdout",
+    )
+    report.add_argument(
+        "--verification-packet",
+        action="store_true",
+        help="render a human-readable NOT TRADE SAFE verification packet "
+        "(implies --manual-review unless another mode is given)",
+    )
+    report.add_argument(
+        "--cleanup-retention",
+        action="store_true",
+        help="delete persisted rows older than ARB_STORAGE_RETENTION_DAYS and exit",
+    )
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -247,15 +271,33 @@ def cli(argv: list[str] | None = None) -> int:
     if args.command == "scan":
         asyncio.run(_scan_loop(settings, args.interval))
         return 0
-    if args.command == "report" and (args.latest or args.manual_review or args.rejections):
+    if args.command == "report" and args.cleanup_retention:
+        from arb_scanner.app.storage.reporting import run_retention_cleanup
+
+        return run_retention_cleanup(
+            args.database_url or settings.database_url,
+            retention_days=settings.storage_retention_days,
+        )
+    if args.command == "report" and (
+        args.latest or args.manual_review or args.rejections or args.verification_packet
+    ):
         from arb_scanner.app.storage.reporting import run_diagnostic_report
 
-        mode = "latest" if args.latest else "manual_review" if args.manual_review else "rejected"
+        mode = (
+            "latest"
+            if args.latest
+            else "rejected"
+            if args.rejections
+            else "manual_review"  # --manual-review, or --verification-packet alone
+        )
         return run_diagnostic_report(
             args.database_url or settings.database_url,
             mode=mode,
             limit=args.limit,
             sort=ManualReviewSort(args.sort),
+            fmt=args.report_format,
+            output=args.output,
+            verification_packet=args.verification_packet,
         )
     if args.command in ("replay", "report"):
         from arb_scanner.app.backtest.replay import run_replay_cli

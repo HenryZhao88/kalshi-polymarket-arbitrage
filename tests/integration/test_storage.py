@@ -1,22 +1,32 @@
 """Storage round-trip tests against in-memory SQLite."""
 
+import asyncio
+import csv
+import io
+import json
 from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from arb_scanner.app.markets.discovery import MatchedPair, evaluate_pair
+from arb_scanner.app.markets.discovery import ManualReviewSort, MatchedPair, evaluate_pair
 from arb_scanner.app.markets.rule_equivalence import MatchStatus
 from arb_scanner.app.storage.engine import init_models, make_engine, make_session_factory
+from arb_scanner.app.storage.export import EXPORT_FIELDS, NOT_TRADE_SAFE_LABEL
 from arb_scanner.app.storage.repo import (
     OpportunityRepo,
     PairRepo,
     SnapshotRepo,
     SqlAlchemyScanStore,
 )
-from arb_scanner.app.storage.reporting import render_pair_row
+from arb_scanner.app.storage.reporting import (
+    render_pair_row,
+    run_diagnostic_report,
+    run_retention_cleanup,
+)
 
 
 @pytest.fixture
@@ -110,6 +120,137 @@ class TestPairRepo:
         await session.flush()
         await store.apply_retention(datetime.now(UTC) - timedelta(days=30))
         assert await PairRepo(session).list_by_status("accepted") == []
+
+
+def _seed_manual_review(database_url: str, *, aged_days: int | None = None) -> None:
+    async def run() -> None:
+        engine = make_engine(database_url)
+        await init_models(engine)
+        factory = make_session_factory(engine)
+        async with factory() as session:
+            repo = PairRepo(session)
+            complete = replace(
+                PAIR,
+                status=MatchStatus.MANUAL_REVIEW,
+                scan_id="scan-1",
+                confidence=0.85,
+                missing_rule_fields=("void_policy",),
+                status_reasons=("void policy unknown",),
+            )
+            incomplete = replace(
+                complete,
+                poly_condition_id="0xincomplete",
+                confidence=0.95,
+                missing_rule_fields=("void_policy", "resolution_source"),
+            )
+            row = await repo.add(complete)
+            await repo.add(incomplete)
+            if aged_days is not None:
+                row.created_at = datetime.now(UTC) - timedelta(days=aged_days)
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(run())
+
+
+class TestDiagnosticReportFormatsEndToEnd:
+    """run_diagnostic_report against a real SQLite file, all output formats."""
+
+    @pytest.fixture
+    def database_url(self, tmp_path: Path) -> str:
+        url = f"sqlite+aiosqlite:///{tmp_path}/report.db"
+        _seed_manual_review(url)
+        return url
+
+    def test_text_to_stdout_default(
+        self, database_url: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert (
+            run_diagnostic_report(
+                database_url, mode="manual_review", limit=10, sort=ManualReviewSort.SIMILARITY
+            )
+            == 0
+        )
+        out = capsys.readouterr().out
+        assert "persisted candidate report: mode=manual_review" in out
+        assert "NOT TRADE SAFE" in out
+        assert "verify manually:" in out
+
+    def test_csv_and_json_files_share_sorted_order(
+        self, database_url: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        csv_path = tmp_path / "manual_review.csv"
+        json_path = tmp_path / "manual_review.json"
+        for fmt, path in (("csv", csv_path), ("json", json_path)):
+            assert (
+                run_diagnostic_report(
+                    database_url,
+                    mode="manual_review",
+                    limit=10,
+                    sort=ManualReviewSort.MISSING_FIELDS,
+                    fmt=fmt,
+                    output=str(path),
+                )
+                == 0
+            )
+            assert f"wrote 2 manual-review row(s) to {path}" in capsys.readouterr().out
+            assert path.exists()
+        csv_rows = list(csv.DictReader(io.StringIO(csv_path.read_text())))
+        payload = json.loads(json_path.read_text())
+        csv_order = [row["polymarket_condition_id"] for row in csv_rows]
+        json_order = [row["polymarket_condition_id"] for row in payload["rows"]]
+        # missing_fields sort: fewer unresolved fields first, in every format.
+        assert csv_order == json_order == ["0xabc", "0xincomplete"]
+        assert list(csv_rows[0]) == list(EXPORT_FIELDS)
+        assert payload["label"] == NOT_TRADE_SAFE_LABEL
+        assert all(row["not_trade_safe_label"] == NOT_TRADE_SAFE_LABEL for row in payload["rows"])
+
+    def test_verification_packet_labels_every_row(
+        self, database_url: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert (
+            run_diagnostic_report(
+                database_url,
+                mode="manual_review",
+                limit=10,
+                sort=ManualReviewSort.MISSING_FIELDS,
+                verification_packet=True,
+            )
+            == 0
+        )
+        out = capsys.readouterr().out
+        assert out.count(NOT_TRADE_SAFE_LABEL) >= 3  # header + both rows
+        assert "verify manually before trusting this match:" in out
+        assert "no claim of arbitrage or profitability" in out
+
+    def test_empty_database_reports_nothing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        url = f"sqlite+aiosqlite:///{tmp_path}/empty.db"
+        assert run_diagnostic_report(url, mode="manual_review", limit=10) == 1
+        assert "no persisted manual-review candidates" in capsys.readouterr().out
+
+
+class TestRetentionCleanupCommand:
+    def test_cleanup_removes_only_expired_rows(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        url = f"sqlite+aiosqlite:///{tmp_path}/retention.db"
+        _seed_manual_review(url, aged_days=60)
+        assert run_retention_cleanup(url, retention_days=30) == 0
+        out = capsys.readouterr().out
+        assert "retention cleanup: removed rows older than 30d" in out
+        assert "matched_pairs=1" in out
+
+        async def count() -> int:
+            engine = make_engine(url)
+            factory = make_session_factory(engine)
+            async with factory() as session:
+                rows = await PairRepo(session).list_by_status("manual_review")
+            await engine.dispose()
+            return len(rows)
+
+        assert asyncio.run(count()) == 1
 
 
 class TestSnapshotAndOpportunity:

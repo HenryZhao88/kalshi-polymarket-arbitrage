@@ -151,8 +151,19 @@ def test_cli_routes_diagnostic_reports(
         mode: str,
         limit: int,
         sort: ManualReviewSort,
+        fmt: str = "text",
+        output: str | None = None,
+        verification_packet: bool = False,
     ) -> int:
-        observed.update(database_url=database_url, mode=mode, limit=limit, sort=sort)
+        observed.update(
+            database_url=database_url,
+            mode=mode,
+            limit=limit,
+            sort=sort,
+            fmt=fmt,
+            output=output,
+            verification_packet=verification_packet,
+        )
         return 0
 
     monkeypatch.setattr(reporting_module, "run_diagnostic_report", fake_report)
@@ -166,4 +177,125 @@ def test_cli_routes_diagnostic_reports(
         "mode": expected_mode,
         "limit": 12,
         "sort": ManualReviewSort.SIMILARITY,
+        "fmt": "text",
+        "output": None,
+        "verification_packet": False,
     }
+
+
+def _capture_report(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    observed: dict[str, Any] = {}
+
+    def fake_report(database_url: str, **kwargs: Any) -> int:
+        observed.update(database_url=database_url, **kwargs)
+        return 0
+
+    monkeypatch.setattr(reporting_module, "run_diagnostic_report", fake_report)
+    return observed
+
+
+def test_cli_forwards_report_format_and_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed = _capture_report(monkeypatch)
+    assert (
+        main_module.cli(
+            [
+                "report",
+                "--manual-review",
+                "--limit",
+                "50",
+                "--sort",
+                "missing_fields",
+                "--format",
+                "csv",
+                "--output",
+                "manual_review.csv",
+                "--database-url",
+                "sqlite+aiosqlite://",
+            ]
+        )
+        == 0
+    )
+    assert observed["fmt"] == "csv"
+    assert observed["output"] == "manual_review.csv"
+    assert observed["sort"] is ManualReviewSort.MISSING_FIELDS
+    assert observed["verification_packet"] is False
+
+
+def test_cli_report_format_defaults_to_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed = _capture_report(monkeypatch)
+    assert (
+        main_module.cli(
+            ["report", "--manual-review", "--database-url", "sqlite+aiosqlite://"]
+        )
+        == 0
+    )
+    assert observed["fmt"] == "text"
+    assert observed["output"] is None
+
+
+def test_cli_verification_packet_implies_manual_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = _capture_report(monkeypatch)
+    assert (
+        main_module.cli(
+            [
+                "report",
+                "--verification-packet",
+                "--limit",
+                "10",
+                "--database-url",
+                "sqlite+aiosqlite://",
+            ]
+        )
+        == 0
+    )
+    assert observed["mode"] == "manual_review"
+    assert observed["verification_packet"] is True
+
+
+@pytest.mark.parametrize(
+    "sort",
+    ["confidence", "market_type", "fee_confidence", "hypothetical_edge", "event_date"],
+)
+def test_cli_report_accepts_all_sort_modes(sort: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    observed = _capture_report(monkeypatch)
+    assert (
+        main_module.cli(
+            [
+                "report",
+                "--manual-review",
+                "--sort",
+                sort,
+                "--database-url",
+                "sqlite+aiosqlite://",
+            ]
+        )
+        == 0
+    )
+    assert observed["sort"] is ManualReviewSort(sort)
+
+
+def test_cli_routes_cleanup_retention(monkeypatch: pytest.MonkeyPatch) -> None:
+    observed: dict[str, Any] = {}
+
+    def fake_cleanup(database_url: str, *, retention_days: int) -> int:
+        observed.update(database_url=database_url, retention_days=retention_days)
+        return 0
+
+    monkeypatch.setattr(reporting_module, "run_retention_cleanup", fake_cleanup)
+    assert (
+        main_module.cli(
+            ["report", "--cleanup-retention", "--database-url", "sqlite+aiosqlite://"]
+        )
+        == 0
+    )
+    assert observed["database_url"] == "sqlite+aiosqlite://"
+    assert observed["retention_days"] == Settings(_env_file=None).storage_retention_days
+
+
+def test_cli_has_no_execution_command() -> None:
+    """The CLI must never grow a trade/execute/order entry point."""
+    for forbidden in ("trade", "execute", "order", "buy", "sell"):
+        with pytest.raises(SystemExit):
+            main_module.cli([forbidden])

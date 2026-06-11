@@ -1,0 +1,75 @@
+MANUAL VERIFICATION PACKET — 3 candidate pair(s) — ALL ROWS NOT TRADE SAFE
+Research material only. No row is a trade recommendation, and no claim of arbitrage or profitability is made. Verify every checklist item against official venue rules before drawing any conclusion.
+
+[1/3] NOT TRADE SAFE | status=manual_review | similarity=0.8247
+  pair: Kalshi GOVPARTYSC-26-R <-> Polymarket 0x1b7fa10e6b102c964bbd4a7cb0a4b7a341e17fcb9f8a2c8a5d6a3b30dfb5c394
+  Kalshi title:     Will the Republican party win the governorship in South Carolina
+  Polymarket title: Will the Republicans win the South Carolina governor race in 2026?
+  why it matched: market types Kalshi=governor_winner / Polymarket=governor_winner; shared tokens: carolina, south, win
+  why not accepted: determination time unverified on at least one venue; resolution source unverified on at least one venue; void policy unknown on at least one venue; UMA challenge window: Polymarket outcome can be disputed post-resolution; not enough verified evidence to accept
+  unresolved fields blocking acceptance: determination_time, resolution_source, void_policy
+  structured conflicts: none
+  identifiers:
+    kalshi ticker: GOVPARTYSC-26-R | event ticker: GOVPARTYSC-26
+    polymarket condition id: 0x1b7fa10e6b102c964bbd4a7cb0a4b7a341e17fcb9f8a2c8a5d6a3b30dfb5c394
+    polymarket tokens: 115258259561547414610995893322363332894307320697384633557391293684664191320185, 17477959378122758499540906149943925432690452353416410038176243997158408694887
+    polymarket slug: will-the-republicans-win-the-south-carolina-governor-race-in-2026 | url: https://polymarket.com/event/south-carolina-governor-winner-2026
+  verify manually before trusting this match:
+    [ ] determination time verified on both venues
+    [ ] official resolution source verified on both venues
+    [ ] void/refund policy verified on both venues
+    [ ] threshold/strike equivalence confirmed
+    [ ] event date equivalence confirmed
+    [ ] order-book liquidity reviewed (economics not computed)
+  rule evidence: kalshi: source=unverified, void=unknown, policies=[]; polymarket: source=unverified, void=unknown, dispute=[]
+  Kalshi rules excerpt: If a representative of the Republican party is inaugurated as the governor of South Carolina pursuant to the 2026 election, then the market resolves to Yes.
+  Polymarket rules excerpt: This market will resolve according to the winner of the 2026 South Carolina gubernatorial election. A candidate shall be considered to represent a party in the event that he or she is the nominee of the party in question. Candidates other t
+
+[2/3] NOT TRADE SAFE | status=manual_review | similarity=0.8211
+  pair: Kalshi GOVPARTYNH-28-R <-> Polymarket 0x01175ab5a40ea7f54b7b0a0aaf3574232e3374091e0bad5a0b9603741ae5d85b
+  Kalshi title:     Will the Republican party win the governorship in New Hampshire
+  Polymarket title: Will the Republicans win the New Hampshire governor race in 2026?
+  why it matched: market types Kalshi=governor_winner / Polymarket=governor_winner; shared tokens: hampshire, new, win
+  why not accepted: determination time unverified on at least one venue; resolution source unverified on at least one venue; void policy unknown on at least one venue; UMA challenge window: Polymarket outcome can be disputed post-resolution; not enough verified evidence to accept
+  unresolved fields blocking acceptance: determination_time, resolution_source, void_policy
+  structured conflicts: none
+  identifiers:
+    kalshi ticker: GOVPARTYNH-28-R | event ticker: GOVPARTYNH-28
+    polymarket condition id: 0x01175ab5a40ea7f54b7b0a0aaf3574232e3374091e0bad5a0b9603741ae5d85b
+    polymarket tokens: 74721757099502856629978429446702729437619614092592091000501653336065671742582, 30088412391482363624377816393145245827324760089787001501690465830184683596344
+    polymarket slug: will-the-republicans-win-the-new-hampshire-governor-race-in-2026 | url: https://polymarket.com/event/new-hampshire-governor-winner-2026
+  verify manually before trusting this match:
+    [ ] determination time verified on both venues
+    [ ] official resolution source verified on both venues
+    [ ] void/refund policy verified on both venues
+    [ ] threshold/strike equivalence confirmed
+    [ ] event date equivalence confirmed
+    [ ] order-book liquidity reviewed (economics not computed)
+  rule evidence: kalshi: source=unverified, void=unknown, policies=[]; polymarket: source=unverified, void=unknown, dispute=[]
+  Kalshi rules excerpt: If a representative of the Republican party is inaugurated as the governor of New Hampshire pursuant to the 2026 election, then the market resolves to Yes.
+  Polymarket rules excerpt: This market will resolve according to the winner of the 2026 New Hampshire gubernatorial election. A candidate shall be considered to represent a party in the event that he or she is the nominee of the party in question. Candidates other th
+
+[3/3] NOT TRADE SAFE | status=manual_review | similarity=0.8172
+  pair: Kalshi GOVPARTYRI-26-R <-> Polymarket 0xc9e6a0be2fe2d015dc1cd9d75f4dc5b48dddee1a7043935ef5d1e981c55d5ffc
+  Kalshi title:     Will the Republican party win the governorship in Rhode Island
+  Polymarket title: Will the Republicans win the Rhode Island governor race in 2026?
+  why it matched: market types Kalshi=governor_winner / Polymarket=governor_winner; shared tokens: island, rhode, win
+  why not accepted: determination time unverified on at least one venue; resolution source unverified on at least one venue; void policy unknown on at least one venue; UMA challenge window: Polymarket outcome can be disputed post-resolution; not enough verified evidence to accept
+  unresolved fields blocking acceptance: determination_time, resolution_source, void_policy
+  structured conflicts: none
+  identifiers:
+    kalshi ticker: GOVPARTYRI-26-R | event ticker: GOVPARTYRI-26
+    polymarket condition id: 0xc9e6a0be2fe2d015dc1cd9d75f4dc5b48dddee1a7043935ef5d1e981c55d5ffc
+    polymarket tokens: 102532646565376609462398061495436415751549869365588135784659237547896983513156, 10715098541516047115241310337325864327460214984462087775958463808642042359347
+    polymarket slug: will-the-republicans-win-the-rhode-island-governor-race-in-2026 | url: https://polymarket.com/event/rhode-island-governor-winner-2026
+  verify manually before trusting this match:
+    [ ] determination time verified on both venues
+    [ ] official resolution source verified on both venues
+    [ ] void/refund policy verified on both venues
+    [ ] threshold/strike equivalence confirmed
+    [ ] event date equivalence confirmed
+    [ ] order-book liquidity reviewed (economics not computed)
+  rule evidence: kalshi: source=unverified, void=unknown, policies=[]; polymarket: source=unverified, void=unknown, dispute=[]
+  Kalshi rules excerpt: If a representative of the Republican party is inaugurated as the governor of Rhode Island pursuant to the 2026 election, then the market resolves to Yes.
+  Polymarket rules excerpt: This market will resolve according to the winner of the 2026 Rhode Island gubernatorial election. A candidate shall be considered to represent a party in the event that he or she is the nominee of the party in question. Candidates other tha
+

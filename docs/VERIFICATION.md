@@ -292,3 +292,45 @@ entries remain diagnostic and explicitly labeled NOT TRADE SAFE. See
 Validation after the structured parsing changes: `312 passed, 1 deselected`,
 `ruff check .` clean, `mypy arb_scanner` clean, `mypy .` clean, and `git diff --check`
 clean. The deselected test is the opt-in live public-read smoke test.
+
+## 6. Report exports, verification checklist, and source identifiers (2026-06-11)
+
+Diagnostic reports now render the same sorted rows as `text`, `csv`, or `json`
+(`--format`, `--output`), plus a human-readable `--verification-packet`. Every
+non-accepted exported row carries the literal label `NOT TRADE SAFE`, and the
+JSON/packet outputs carry an explicit disclaimer that no row is a trade
+recommendation or an arbitrage/profitability claim. Exports contain only
+persisted venue market metadata; settings and credentials are never serialized.
+
+Checklist fields (`needs_determination_time`, `needs_resolution_source`,
+`needs_void_policy`, `needs_threshold_confirmation`,
+`needs_event_date_confirmation`, `needs_market_type_confirmation`,
+`needs_fee_confirmation`, `needs_liquidity_confirmation`) are derived
+diagnostics, not acceptance rules: a field missing on either venue, named in
+the unresolved rule fields, or named in a structured conflict flags it;
+`needs_fee_confirmation` flags any fee source other than per-market venue
+metadata; `needs_liquidity_confirmation` flags rows whose order-book economics
+were never computed. Clearing the checklist does not accept a pair and
+acceptance thresholds were not changed.
+
+Public URL derivation policy:
+
+- Polymarket: Gamma event metadata exposes `slug` values that map to the
+  public page `https://polymarket.com/event/<event-slug>`; the export derives
+  that URL only when an event slug was captured. The market-level `slug` is
+  exported as an identifier without a URL.
+- Kalshi: no public market URL is reliably derivable from the market ticker
+  alone (public pages are organized by series/event slugs that the trade API
+  market payload does not document as URL components), so Kalshi rows export
+  the market ticker and `event_ticker` identifiers without a URL. Verified
+  against current code/docs on 2026-06-11; revisit if Kalshi documents a
+  canonical ticker-addressed URL.
+
+Rows persisted before this change lack the new identifiers (`event_ticker`,
+`slug`, `event_slug`); exports render those as null/empty rather than guessing.
+
+Storage growth: raw conflict-free low-similarity candidates are not persisted
+by default; structured rejections are capped per scan; every persisted scan
+pass prunes rows older than `ARB_STORAGE_RETENTION_DAYS`; and
+`arb-scanner report --cleanup-retention` prunes on demand, printing per-table
+removal counts.
