@@ -442,6 +442,26 @@ class TestContinentScopeConflict:
         no_wc = "Will the winner be from any continent other than Europe or South America?"
         assert continent_scope_conflict(no_wc, POLY_SA_WINS_WC) is None
 
+    def test_no_clause_complement_phrasing_is_not_an_exclusion(self) -> None:
+        # An equivalent single-continent market whose rules state the No side
+        # as a complement must not be read as a complement market.
+        kalshi_sa_no_clause = (
+            "Will South America (CONMEBOL) win the 2026 Men's World Cup?\n"
+            "If a country from South America wins the 2026 Men's FIFA World Cup, "
+            "then the market resolves to Yes. If any country not in South America "
+            "wins the 2026 Men's FIFA World Cup, then the market resolves to No."
+        )
+        assert continent_scope_conflict(kalshi_sa_no_clause, POLY_SA_WINS_WC) is None
+
+    def test_yes_clause_complement_still_detected_after_a_no_clause(self) -> None:
+        # The genuine complement market keeps firing even with a No sentence
+        # elsewhere in its rules.
+        kalshi_with_no_clause = (
+            KALSHI_CONTINENT_COMPLEMENT
+            + " If a country from Europe or South America wins, the market resolves to No."
+        )
+        assert continent_scope_conflict(kalshi_with_no_clause, POLY_SA_WINS_WC) is not None
+
 
 class TestSportsStageVsWinnerConflict:
     def test_knockout_count_vs_winner_is_rejected(self) -> None:

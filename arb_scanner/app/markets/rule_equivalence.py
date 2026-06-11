@@ -199,9 +199,25 @@ def _continents_in(text: str) -> frozenset[str]:
     )
 
 
+_RESOLVES_NO_RE = re.compile(r"\bresolv\w*\s+(?:to\s+)?(?:[\"'“”]\s*)?no\b", re.IGNORECASE)
+
+
 def _excluded_continents(text: str) -> frozenset[str]:
-    match = _CONTINENT_COMPLEMENT_RE.search(text)
-    return _continents_in(match.group(1)) if match else frozenset()
+    """Continents a complement market excludes from its YES outcome.
+
+    A complement phrase inside a resolves-to-No sentence is the inverse
+    statement of an ordinary single-continent market ("if any country not in
+    South America wins, the market resolves to No") and must not be read as
+    the market's payout criterion.
+    """
+    for match in _CONTINENT_COMPLEMENT_RE.finditer(text):
+        sentence_start = text.rfind(".", 0, match.start()) + 1
+        sentence_end = text.find(".", match.end())
+        sentence = text[sentence_start : sentence_end if sentence_end != -1 else len(text)]
+        if _RESOLVES_NO_RE.search(sentence):
+            continue
+        return _continents_in(match.group(1))
+    return frozenset()
 
 
 def continent_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
