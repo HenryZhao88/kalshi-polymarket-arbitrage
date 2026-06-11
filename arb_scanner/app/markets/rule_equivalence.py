@@ -209,8 +209,12 @@ def continent_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
 
     Example: Kalshi "winner … from any continent other than Europe or South
     America" vs Polymarket "Will South America win the World Cup". Fires only
-    when exactly one side is a complement and the other names exactly one
-    continent that is inside the complement's exclusion list.
+    when exactly one side is a complement and the other's title (the first
+    line of the ``title\\nrules`` input) names exactly one continent inside
+    the exclusion list. Only the title identifies the market's continent:
+    multi-outcome rules text enumerates other continents as examples ("if
+    France wins, the market will resolve to Europe"), so the rules text can
+    never be used to classify the specific side.
     """
     if not (_WORLD_CUP_RE.search(kalshi_text) and _WORLD_CUP_RE.search(poly_text)):
         return None
@@ -220,7 +224,8 @@ def continent_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
         return None
     excluded = kalshi_excluded or poly_excluded
     specific_side = poly_text if kalshi_excluded else kalshi_text
-    named = _continents_in(specific_side)
+    specific_title = specific_side.split("\n", 1)[0]
+    named = _continents_in(specific_title)
     if len(named) != 1:
         return None
     (continent,) = named
@@ -429,9 +434,15 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
             failures.append(conflict)
     # These four read titles too: the distinguishing language (continent
     # complement, team counts, best-month, intramonth high) often appears
-    # only in the question text.
-    kalshi_combined = f"{kalshi.title}\n{kalshi.resolution_text}"
-    poly_combined = f"{poly.title}\n{poly.resolution_text}"
+    # only in the question text. Convention: the first line of the combined
+    # text is the market title, so an empty title must not inject a blank
+    # first line.
+    kalshi_combined = (
+        f"{kalshi.title}\n{kalshi.resolution_text}" if kalshi.title else kalshi.resolution_text
+    )
+    poly_combined = (
+        f"{poly.title}\n{poly.resolution_text}" if poly.title else poly.resolution_text
+    )
     for detect in (
         continent_scope_conflict,
         sports_stage_vs_winner_conflict,

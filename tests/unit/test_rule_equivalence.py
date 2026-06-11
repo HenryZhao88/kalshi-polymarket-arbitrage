@@ -349,10 +349,17 @@ KALSHI_CONTINENT_COMPLEMENT = (
     "If any country not in Europe or South America wins the 2026 Men's FIFA "
     "World Cup, then the market resolves to Yes."
 )
+# Real Gamma description (condition 0x0ed2e5e9…, fetched 2026-06-11): the
+# rules text names OTHER continents as examples, so only the title can
+# identify which continent this market is.
 POLY_SA_WINS_WC = (
     "Will South America win the 2026 FIFA World Cup?\n"
     "This market will resolve to the continent of the country that wins the "
-    "2026 FIFA World Cup."
+    "2026 FIFA World Cup, currently scheduled for June 11-July 19, 2026. "
+    "For example, if France wins the tournament, the market will resolve to "
+    "Europe. If the 2026 FIFA World Cup is cancelled, postponed after "
+    "December 31, 2026, or there is otherwise no winner declared within that "
+    "timeframe, this market will resolve to “Other”."
 )
 KALSHI_KNOCKOUT_COUNT = (
     "Will at least 2 teams from South America reach the knockout stage of the "
