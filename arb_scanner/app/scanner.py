@@ -347,8 +347,11 @@ def _rejection_bucket(reason: str) -> str:
         ("similarity_below_review_threshold", ("similarity below",)),
         ("determination_time_conflict", ("determination_time", "determination time differs")),
         ("event_date_conflict", ("event_date",)),
-        ("threshold_conflict", ("strike ", "threshold ")),
+        # Market type before threshold: type names can contain "threshold"
+        # ("market type crypto_price_threshold (title) != …") while genuine
+        # threshold reasons never contain "market type".
         ("market_type_conflict", ("market type",)),
+        ("threshold_conflict", ("strike ", "threshold ")),
         ("contract_shape_conflict", ("contract shape",)),
         ("settlement_basis_conflict", ("settlement_basis_conflict",)),
         ("office_level_conflict", ("office_level_conflict",)),

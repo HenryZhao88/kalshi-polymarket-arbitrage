@@ -39,6 +39,15 @@ def test_rejection_histogram_uses_one_primary_reason() -> None:
     )
 
 
+def test_market_type_reasons_mentioning_threshold_bucket_as_market_type() -> None:
+    reason = "market type crypto_price_threshold (title) != crypto_monthly_performance (title)"
+    assert _primary_rejection_bucket((reason,)) == "market_type_conflict"
+    # Genuine threshold reasons keep their own bucket.
+    assert _primary_rejection_bucket(("threshold 70000 (title) != 80000 (title)",)) == (
+        "threshold_conflict"
+    )
+
+
 def test_settlement_basis_conflict_has_its_own_histogram_bucket() -> None:
     reason = (
         "settlement_basis_conflict: Kalshi resolves on the officeholder sworn "
