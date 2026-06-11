@@ -294,6 +294,14 @@ def test_cli_routes_cleanup_retention(monkeypatch: pytest.MonkeyPatch) -> None:
     assert observed["retention_days"] == Settings(_env_file=None).storage_retention_days
 
 
+def test_cli_rejects_packet_with_non_text_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    _capture_report(monkeypatch)
+    with pytest.raises(SystemExit):
+        main_module.cli(
+            ["report", "--verification-packet", "--format", "csv", "--database-url", "x"]
+        )
+
+
 def test_cli_has_no_execution_command() -> None:
     """The CLI must never grow a trade/execute/order entry point."""
     for forbidden in ("trade", "execute", "order", "buy", "sell"):

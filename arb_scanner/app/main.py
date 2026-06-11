@@ -252,6 +252,12 @@ def cli(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    if (
+        args.command == "report"
+        and args.verification_packet
+        and args.report_format != "text"
+    ):
+        parser.error("--verification-packet renders text only; drop --format")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     settings = Settings()
 
