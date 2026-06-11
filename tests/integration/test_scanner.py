@@ -48,6 +48,14 @@ def test_market_type_reasons_mentioning_threshold_bucket_as_market_type() -> Non
     )
 
 
+def test_void_policy_conflict_reason_buckets_by_name() -> None:
+    reason = (
+        "void_policy_conflict: incompatible cancellation settlement "
+        "(kalshi=fair_value_settlement, polymarket=resolves_to_other)"
+    )
+    assert _primary_rejection_bucket((reason,)) == "void_policy_conflict"
+
+
 def test_settlement_basis_conflict_has_its_own_histogram_bucket() -> None:
     reason = (
         "settlement_basis_conflict: Kalshi resolves on the officeholder sworn "

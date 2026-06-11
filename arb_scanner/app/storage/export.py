@@ -96,6 +96,9 @@ EXPORT_FIELDS: tuple[str, ...] = (
     "polymarket_rules_excerpt",
     "unsafe_hypothetical_edge_if_available",
     *CHECKLIST_FIELDS,
+    # Appended after the checklist to honor the append-only header contract.
+    "kalshi_cancellation_policy_basis",
+    "polymarket_cancellation_policy_basis",
 )
 
 
@@ -213,9 +216,11 @@ def _rule_evidence_summary(kalshi: dict[str, Any], poly: dict[str, Any]) -> str:
     return (
         f"kalshi: source={kalshi.get('resolution_source') or 'unverified'}, "
         f"void={kalshi.get('void_policy') or 'unknown'}, "
+        f"cancellation={kalshi.get('cancellation_policy_basis') or 'unknown'}, "
         f"policies={list(kalshi.get('sports_policy_terms') or [])}; "
         f"polymarket: source={poly.get('resolution_source') or 'unverified'}, "
         f"void={poly.get('void_policy') or 'unknown'}, "
+        f"cancellation={poly.get('cancellation_policy_basis') or 'unknown'}, "
         f"dispute={list(poly.get('dispute_terms') or [])}"
     )
 
@@ -287,6 +292,8 @@ def pair_record(row: MatchedPairRow) -> dict[str, Any]:
         "kalshi_rules_excerpt": _text_excerpt(kalshi.get("rules_text")),
         "polymarket_rules_excerpt": _text_excerpt(poly.get("description")),
         "unsafe_hypothetical_edge_if_available": hypothetical,
+        "kalshi_cancellation_policy_basis": kalshi.get("cancellation_policy_basis"),
+        "polymarket_cancellation_policy_basis": poly.get("cancellation_policy_basis"),
     }
     record.update(verification_checklist(record))
     return record

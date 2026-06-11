@@ -605,6 +605,59 @@ class TestEvaluatePairEndToEnd:
             "sports_stage_vs_winner_conflict" in reason for reason in pair.status_reasons
         )
 
+    def test_wc_continent_pair_surfaces_void_policy_mismatch(self) -> None:
+        # The verified KXWCCONTINENT-26-SA pair: normal-state outcomes
+        # coincide, but Polymarket proves resolves-to-Other cancellation
+        # while Kalshi's fair-value handling is invisible to the scanner.
+        # Must stay manual_review with an explicit mismatch reason.
+        kalshi = {
+            "ticker": "KXWCCONTINENT-26-SA",
+            "title": "Will South America (CONMEBOL) win the 2026 Men's World Cup?",
+            "expected_expiration_time": "2026-07-20T00:00:00Z",
+            "rules_primary": (
+                "If any country that competes in South America (CONMEBOL) "
+                "qualification is the 2026 FIFA Men's World Cup champion, then "
+                "the market resolves to Yes."
+            ),
+        }
+        poly = {
+            "conditionId": "0x0ed2e5e9",
+            "question": "Will South America (CONMEBOL) win the 2026 FIFA World Cup?",
+            "clobTokenIds": '["111", "222"]',
+            "description": (
+                "This market will resolve to the continent of the country that "
+                "wins the 2026 FIFA World Cup. If the 2026 FIFA World Cup is "
+                "cancelled, postponed after December 31, 2026, or there is "
+                "otherwise no winner declared within that timeframe, this market "
+                "will resolve to “Other”."
+            ),
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.MANUAL_REVIEW
+        assert any("void_policy_mismatch" in reason for reason in pair.status_reasons)
+        assert "void_policy_basis" in pair.missing_rule_fields
+        excerpts = pair.metadata_excerpts
+        assert excerpts["polymarket"]["cancellation_policy_basis"] == "resolves_to_other"
+        assert excerpts["kalshi"]["cancellation_policy_basis"] is None
+
+    def test_proven_incompatible_cancellation_policies_are_rejected(self) -> None:
+        # If Kalshi's rules text DID carry the fair-value language, the pair
+        # must hard-reject through the existing decide_status path.
+        kalshi, poly = self.equivalent_markets()
+        kalshi["rules_primary"] = (
+            str(kalshi["rules_primary"]) + " If the event is cancelled outright, "
+            "Yes holders receive the last traded price prior to cancellation."
+        )
+        poly["description"] = (
+            str(poly["description"]) + " If the event is cancelled, this market "
+            "will resolve to “Other”."
+        )
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.REJECTED
+        assert any("void_policy_conflict" in reason for reason in pair.status_reasons)
+
     def test_title_match_but_missing_rules_is_manual_review(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")

@@ -358,7 +358,7 @@ def _rejection_bucket(reason: str) -> str:
         ("basket_scope_conflict", ("basket_scope_conflict",)),
         ("outcome_entity_conflict", ("outcome party",)),
         ("resolution_source_conflict", ("resolution source",)),
-        ("void_policy_conflict", ("void policy",)),
+        ("void_policy_conflict", ("void policy", "void_policy_conflict")),
         ("sports_policy_conflict", ("sports postponement",)),
     ):
         if any(fragment in lowered for fragment in fragments):

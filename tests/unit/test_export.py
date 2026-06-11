@@ -147,6 +147,20 @@ class TestPairRecord:
         assert record["polymarket_url"] is None
         assert record["kalshi_void_policy"] is None
 
+    def test_cancellation_policy_basis_fields(self) -> None:
+        row = make_row()
+        row.matched_fields["metadata_excerpts"]["polymarket"][
+            "cancellation_policy_basis"
+        ] = "resolves_to_other"
+        record = pair_record(row)
+        assert record["polymarket_cancellation_policy_basis"] == "resolves_to_other"
+        assert record["kalshi_cancellation_policy_basis"] is None  # not extracted
+        assert "cancellation=resolves_to_other" in record["rule_evidence_summary"]
+        assert "cancellation=unknown" in record["rule_evidence_summary"]
+        # Rows persisted before this field existed export None, not a guess.
+        old = pair_record(make_row(matched_fields={"metadata_excerpts": {}}))
+        assert old["polymarket_cancellation_policy_basis"] is None
+
     def test_comparison_fields(self) -> None:
         row = make_row(
             differing_fields={

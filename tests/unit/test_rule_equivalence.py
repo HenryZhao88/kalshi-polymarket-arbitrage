@@ -11,6 +11,8 @@ from arb_scanner.app.markets.rule_equivalence import (
     MatchStatus,
     PolymarketRuleFacts,
     basket_scope_conflict,
+    cancellation_policy_basis,
+    cancellation_policy_terms,
     continent_scope_conflict,
     crypto_performance_vs_price_threshold_conflict,
     decide_status,
@@ -19,6 +21,7 @@ from arb_scanner.app.markets.rule_equivalence import (
     sports_stage_vs_winner_conflict,
     stock_close_vs_intramonth_high_conflict,
     validate_rules,
+    void_policy_conflict,
 )
 
 T0 = datetime(2026, 6, 30, 16, 0, tzinfo=UTC)
@@ -625,6 +628,145 @@ class TestStockCloseVsIntramonthHighConflict:
     def test_unclassifiable_side_falls_through(self) -> None:
         vague = "Will the S&P 500 be above 8,200 in December 2026?"
         assert stock_close_vs_intramonth_high_conflict(vague, POLY_SPX_HIGH) is None
+
+
+# Verbatim cancellation-policy excerpts fetched 2026-06-11
+# (docs/VERIFICATION.md §10). The Kalshi text is from the ACHIEVEMENTS
+# contract terms (SOCCER.pdf); the Polymarket text is the live description of
+# the South America World Cup market (condition 0x0ed2e5e9…).
+KALSHI_FAIR_VALUE_CANCELLATION = (
+    "If the final event necessary for determining the result is cancelled "
+    "outright before the final event is concluded, then the markets for "
+    "eligible participants will resolve so “Yes” holders receive the last "
+    "traded price prior to cancellation and “No” holders receive $1 minus the "
+    "Yes payout. If a last traded price is not available, the Outcome Review "
+    "Committee will be responsible for making a binding determination of fair "
+    "allocation. If a fair allocation is not able to be reliably determined, "
+    "then the markets will resolve so “Yes” holders receive $1/[the number of "
+    "eligible participants remaining] rounded down to the nearest cent."
+)
+POLY_RESOLVES_TO_OTHER = (
+    "If the 2026 FIFA World Cup is cancelled, postponed after December 31, "
+    "2026, or there is otherwise no winner declared within that timeframe, "
+    "this market will resolve to “Other”."
+)
+KALSHI_WC_CONTINENT_RULES = (
+    "If any country that competes in South America (CONMEBOL) qualification "
+    "is the 2026 FIFA Men's World Cup champion, then the market resolves to "
+    "Yes. For settlement purposes, a country is considered part of a "
+    "continent based on the FIFA World Cup qualification pathway it competes "
+    "through, rather than strict geographic borders."
+)
+
+
+class TestCancellationPolicyBasis:
+    def test_kalshi_fair_value_terms_and_basis(self) -> None:
+        terms = cancellation_policy_terms(KALSHI_FAIR_VALUE_CANCELLATION)
+        assert "fair_value" in terms  # via "last traded price"
+        assert "committee_review" in terms
+        assert "split_or_1_over_n" in terms
+        assert "cancellation" in terms
+        assert cancellation_policy_basis(KALSHI_FAIR_VALUE_CANCELLATION) == (
+            "fair_value_settlement"
+        )
+
+    def test_polymarket_resolves_to_other_terms_and_basis(self) -> None:
+        terms = cancellation_policy_terms(POLY_RESOLVES_TO_OTHER)
+        assert "resolves_to_other" in terms
+        assert "hard_no_on_other" in terms
+        assert "cancellation" in terms
+        assert "postponement_deadline" in terms
+        assert cancellation_policy_basis(POLY_RESOLVES_TO_OTHER) == "resolves_to_other"
+
+    def test_text_without_cancellation_language_has_no_basis(self) -> None:
+        assert cancellation_policy_basis(KALSHI_WC_CONTINENT_RULES) is None
+        assert cancellation_policy_terms(KALSHI_WC_CONTINENT_RULES) == ()
+
+    def test_text_with_both_families_is_ambiguous(self) -> None:
+        both = KALSHI_FAIR_VALUE_CANCELLATION + " " + POLY_RESOLVES_TO_OTHER
+        assert cancellation_policy_basis(both) is None
+
+
+class TestVoidPolicyConflict:
+    def test_proven_fair_value_vs_resolves_to_other_is_rejected(self) -> None:
+        message = void_policy_conflict(KALSHI_FAIR_VALUE_CANCELLATION, POLY_RESOLVES_TO_OTHER)
+        assert message is not None
+        assert "void_policy_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_FAIR_VALUE_CANCELLATION,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_RESOLVES_TO_OTHER,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("void_policy_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_fires_in_either_direction(self) -> None:
+        assert (
+            void_policy_conflict(POLY_RESOLVES_TO_OTHER, KALSHI_FAIR_VALUE_CANCELLATION)
+            is not None
+        )
+
+    def test_same_fair_value_policy_does_not_conflict(self) -> None:
+        assert (
+            void_policy_conflict(
+                KALSHI_FAIR_VALUE_CANCELLATION, KALSHI_FAIR_VALUE_CANCELLATION
+            )
+            is None
+        )
+
+    def test_same_resolves_to_other_policy_does_not_conflict(self) -> None:
+        assert void_policy_conflict(POLY_RESOLVES_TO_OTHER, POLY_RESOLVES_TO_OTHER) is None
+
+    def test_one_sided_extraction_stays_manual_review_with_mismatch_warning(self) -> None:
+        # The live KXWCCONTINENT-26-SA shape: Kalshi's fair-value handling is
+        # in series contract terms the scanner never sees, so only the
+        # Polymarket basis is provable. Must NOT hard-reject.
+        assert void_policy_conflict(KALSHI_WC_CONTINENT_RULES, POLY_RESOLVES_TO_OTHER) is None
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_WC_CONTINENT_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_RESOLVES_TO_OTHER,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert not any("void_policy_conflict" in f for f in result.hard_failures)
+        assert any(
+            "void_policy_mismatch: kalshi=unknown polymarket=resolves_to_other" in w
+            for w in result.warnings
+        )
+        assert "void_policy_basis" in result.missing_fields
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_both_sides_unknown_get_no_mismatch_warning(self) -> None:
+        result = validate_rules(
+            kalshi_facts(resolution_text=KALSHI_WC_CONTINENT_RULES),
+            poly_facts(resolution_text=KALSHI_WC_CONTINENT_RULES),
+        )
+        assert not any("void_policy_mismatch" in w for w in result.warnings)
+
+    def test_mismatch_warning_never_accepts(self) -> None:
+        # The warning can only push toward manual_review, never toward accept.
+        result = validate_rules(
+            kalshi_facts(resolution_text=KALSHI_WC_CONTINENT_RULES),
+            poly_facts(resolution_text=POLY_RESOLVES_TO_OTHER),
+        )
+        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
 
 
 class TestDecideStatus:

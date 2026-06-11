@@ -372,6 +372,72 @@ def stock_close_vs_intramonth_high_conflict(kalshi_text: str, poly_text: str) ->
     )
 
 
+# Cancellation/void-policy basis extraction, verified 2026-06-11 against
+# KXWCCONTINENT-26-SA vs Polymarket "South America wins the 2026 FIFA World
+# Cup" (docs/VERIFICATION.md §10). Kalshi ACHIEVEMENTS-style contracts settle
+# a cancelled event at FAIR VALUE (last traded price / Outcome Review
+# Committee / $1-over-N split); Polymarket negRisk events resolve to "Other",
+# paying each named outcome a hard No. Those bases pay differently in the
+# cancellation state, so a pair proven to hold one basis on each venue is not
+# arbitrage-equivalent even when normal-state outcomes coincide.
+_CANCELLATION_POLICY_TERMS: tuple[tuple[str, str], ...] = (
+    ("fair_value", r"\bfair[- ]value\b|\blast traded price\b"),
+    ("committee_review", r"\b(?:outcome )?review committee\b"),
+    ("split_or_1_over_n", r"\$1\s*/\s*\[|\bsplit equally\b|\bequal(?:ly)? split\b"),
+    ("resolves_to_other", r"\bresolve[sd]?\s+to\s+[“”\"']?other\b"),
+    ("hard_no_on_other", r"\bno winner\b[^.\n]{0,60}\b(?:declared|timeframe)\b"),
+    ("cancellation", r"\bcancel(?:led|ed|lation)?\b"),
+    ("postponement_deadline", r"\bpostpon\w*\s+(?:after|past|beyond)\b[^.\n]{0,40}\d{4}"),
+)
+_FAIR_VALUE_FAMILY = frozenset({"fair_value", "committee_review", "split_or_1_over_n"})
+_RESOLVES_OTHER_FAMILY = frozenset({"resolves_to_other", "hard_no_on_other"})
+
+
+def cancellation_policy_terms(text: str) -> tuple[str, ...]:
+    """Named cancellation-handling terms present in rules text."""
+    return tuple(
+        name
+        for name, pattern in _CANCELLATION_POLICY_TERMS
+        if re.search(pattern, text, re.IGNORECASE)
+    )
+
+
+def cancellation_policy_basis(text: str) -> str | None:
+    """Classify rules text as fair_value_settlement or resolves_to_other.
+
+    Returns None when neither family is present or when both are (ambiguous
+    text never proves a basis).
+    """
+    terms = frozenset(cancellation_policy_terms(text))
+    fair_value = bool(terms & _FAIR_VALUE_FAMILY)
+    other = bool(terms & _RESOLVES_OTHER_FAMILY)
+    if fair_value and not other:
+        return "fair_value_settlement"
+    if other and not fair_value:
+        return "resolves_to_other"
+    return None
+
+
+def void_policy_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect provably incompatible cancellation settlement bases.
+
+    Fires only when BOTH sides' rules text proves a basis and the bases
+    differ. One-sided or ambiguous extraction never fires — callers surface
+    that as a void_policy_mismatch warning instead, keeping the pair in
+    manual_review rather than rejecting on unproven evidence.
+    """
+    kalshi_basis = cancellation_policy_basis(kalshi_text)
+    poly_basis = cancellation_policy_basis(poly_text)
+    if kalshi_basis is None or poly_basis is None or kalshi_basis == poly_basis:
+        return None
+    return (
+        "void_policy_conflict: incompatible cancellation settlement "
+        f"(kalshi={kalshi_basis}, polymarket={poly_basis}); a cancelled event "
+        "pays fair value on one venue and a hard No on the other "
+        "(verified 2026-06-11, docs/VERIFICATION.md §10)"
+    )
+
+
 class MatchStatus(StrEnum):
     ACCEPTED = "accepted"
     REJECTED = "rejected"
@@ -464,10 +530,24 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         sports_stage_vs_winner_conflict,
         crypto_performance_vs_price_threshold_conflict,
         stock_close_vs_intramonth_high_conflict,
+        void_policy_conflict,
     ):
         conflict = detect(kalshi_combined, poly_combined)
         if conflict:
             failures.append(conflict)
+    # One-sided basis extraction can't prove a conflict (e.g. Kalshi's fair-
+    # value handling lives in series-level contract terms the scanner never
+    # fetches), but it is a stronger signal than "void policy unknown":
+    # surface it explicitly and keep the pair in manual_review.
+    kalshi_basis = cancellation_policy_basis(kalshi_combined)
+    poly_basis = cancellation_policy_basis(poly_combined)
+    if (kalshi_basis is None) != (poly_basis is None):
+        warnings.append(
+            f"void_policy_mismatch: kalshi={kalshi_basis or 'unknown'} "
+            f"polymarket={poly_basis or 'unknown'} — cancellation handling "
+            "unverified on one venue"
+        )
+        missing.append("void_policy_basis")
 
     # Void / DNP / postponement handling.
     if kalshi.void_policy is None or poly.void_policy is None:

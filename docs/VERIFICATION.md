@@ -494,3 +494,59 @@ Parser improvements in the same pass: `sports_stage_count` and
 `crypto_monthly_performance` market types, so these shapes also surface as
 structured market-type evidence. All four conflicts have named rejection
 histogram buckets, ranked above the generic threshold/market-type buckets.
+
+## 10. World Cup South America pair: cancellation-policy divergence (2026-06-11)
+
+Manual verification of KXWCCONTINENT-26-SA vs Polymarket condition
+`0x0ed2e5e9…` ("Will South America (CONMEBOL) win the 2026 FIFA World Cup?",
+negRisk continent event). Sources fetched 2026-06-11:
+
+- https://api.elections.kalshi.com/trade-api/v2/markets/KXWCCONTINENT-26-SA
+- https://api.elections.kalshi.com/trade-api/v2/series/KXWCCONTINENT
+- https://kalshi-public-docs.s3.amazonaws.com/contract_terms/SOCCER.pdf
+- https://gamma-api.polymarket.com/markets?condition_ids=0x0ed2e5e9…
+- https://worldpopulationreview.com/country-rankings/list-of-countries-by-continent
+  (Polymarket's cited definitive continent source)
+
+**Normal-case match:** Kalshi defines continent by FIFA qualification pathway
+(explicit country table in rules_secondary); Polymarket by World Population
+Review geography. Checked against the live WPR data, the two classifications
+coincide on **every 2026 qualified team** for the South America leg (WPR puts
+Curaçao and Aruba in North America; Suriname did not qualify). Türkiye
+diverges (Kalshi UEFA/Europe vs WPR Asia) — a live warning for the Europe and
+Asia legs of this family, but not for South America.
+
+**Edge-case mismatch (the verdict driver):** the cancellation policies are
+documented and structurally opposite. Kalshi's ACHIEVEMENTS contract terms
+settle a cancelled event at **fair value** — *"'Yes' holders receive the last
+traded price prior to cancellation"*, else an Outcome Review Committee
+determination, else a *"$1/[number of eligible participants]"* split.
+Polymarket resolves to **"Other"** — *"If the 2026 FIFA World Cup is
+cancelled, postponed after December 31, 2026, or there is otherwise no winner
+declared within that timeframe, this market will resolve to 'Other'"* — so
+the South America leg pays a hard No. A two-leg hedge does not net $1 in the
+cancellation state. Verdict: **NOT EQUIVALENT for arbitrage purposes.** This
+is not a profit or arbitrage claim; the pair remains NOT TRADE SAFE.
+
+Encoded in `rule_equivalence.py` as a two-layer diagnostic (rejection-only;
+nothing here can accept a pair):
+
+- `cancellation_policy_terms` / `cancellation_policy_basis` extract named
+  terms (`fair_value`, `committee_review`, `split_or_1_over_n`,
+  `resolves_to_other`, `hard_no_on_other`, `cancellation`,
+  `postponement_deadline`) and classify rules text as
+  `fair_value_settlement` or `resolves_to_other`; text showing both families
+  or neither is ambiguous and classifies as None.
+- `void_policy_conflict` **hard-rejects** only when BOTH sides' rules text
+  proves a basis and the bases differ.
+- One-sided extraction adds a `void_policy_mismatch` **warning** and a
+  `void_policy_basis` missing field instead — the pair stays manual_review.
+  This is the live KXWCCONTINENT shape: Kalshi's fair-value handling lives in
+  the series-level contract-terms PDF, which the scanner does not fetch, so
+  only the Polymarket basis is provable from market metadata.
+
+The bases are persisted in metadata excerpts and exported
+(`kalshi_cancellation_policy_basis`, `polymarket_cancellation_policy_basis`,
+appended after the checklist columns to keep CSV headers append-only) and
+appear in the rule-evidence summary used by text reports and verification
+packets.
