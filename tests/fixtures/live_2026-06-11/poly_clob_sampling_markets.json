@@ -1,0 +1,182 @@
+{
+ "data": [
+  {
+   "enable_order_book": true,
+   "active": true,
+   "closed": false,
+   "archived": false,
+   "accepting_orders": true,
+   "accepting_order_timestamp": "2025-11-26T16:55:29Z",
+   "minimum_order_size": 5,
+   "minimum_tick_size": 0.01,
+   "condition_id": "0x384e2707bbb95da4bfa6f330fe7d5ccbec1c0a85e20be900cbf599987588e1a4",
+   "question_id": "0x5f48e52f1d722e63dbeba350622eb0ab70e23fb9ddd8e6f1286571a9222f60d8",
+   "question": "Reya FDV above $200M one day after launch?",
+   "description": "This market will resolve to \"Yes\" if the Fully Diluted Valuation of Reya's token is greater than the value specified in the title 1 day after launch. Otherwise, the market will resolve to \"No.\"\n\nThe token must be actively, publicly transferable and tradable to be considered a launch.\n\nThe FDV will be determined using the total token supply multiplied by the token price.\n\n\"1 day after launch\" is defined as 4:00 PM ET on the calendar day following launch. The resolution source for this market is the most liquid price source available. If Reya (https://x.com/reya_xyz) doesn't launch a token by December 31, 2026, 11:59 PM ET, this market will resolve to \"No\".",
+   "market_slug": "reya-fdv-above-200m-one-day-after-launch-645-575",
+   "end_date_iso": "2027-01-01T00:00:00Z",
+   "game_start_time": null,
+   "seconds_delay": 0,
+   "fpmm": "",
+   "maker_base_fee": 1000,
+   "taker_base_fee": 1000,
+   "notifications_enabled": true,
+   "neg_risk": false,
+   "neg_risk_market_id": "",
+   "neg_risk_request_id": "",
+   "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/reya-fdv-above-one-day-after-launch-XOYUN61AHrW4.jpg",
+   "image": "https://polymarket-upload.s3.us-east-2.amazonaws.com/reya-fdv-above-one-day-after-launch-XOYUN61AHrW4.jpg",
+   "rewards": {
+    "rates": [
+     {
+      "asset_address": "0x2791bca1f2de4661ed88a30c99a7a9449aa84174",
+      "rewards_daily_rate": 0.001
+     }
+    ],
+    "min_size": 20,
+    "max_spread": 3.5
+   },
+   "is_50_50_outcome": false,
+   "tokens": [
+    {
+     "token_id": "78433024518676680431174478322854148606578065650008220678402966840627347604025",
+     "outcome": "Yes",
+     "price": 0.19,
+     "winner": false
+    },
+    {
+     "token_id": "50346565575310273995396997144874891836871065259829083228393044602519086496922",
+     "outcome": "No",
+     "price": 0.81,
+     "winner": false
+    }
+   ],
+   "tags": [
+    "Crypto",
+    "FDV",
+    "Pre-Market",
+    "Reya"
+   ]
+  },
+  {
+   "enable_order_book": true,
+   "active": true,
+   "closed": false,
+   "archived": false,
+   "accepting_orders": true,
+   "accepting_order_timestamp": "2025-05-02T15:47:45Z",
+   "minimum_order_size": 5,
+   "minimum_tick_size": 0.01,
+   "condition_id": "0x50ddb9cd80d5c271664a2ebb7fcaed1d0a148d82c8e8d314d830f75a944c3dcc",
+   "question_id": "0x6ec4702f0a5bb188f0dd498647641f2aa13a871953a7f15fa3413939ad68144c",
+   "question": "New Playboi Carti Album before GTA VI?",
+   "description": "This market will resolve to \"Yes\" if Playboi Carti officially releases a new album before Grand Theft Auto VI is officially released in the US. Otherwise, this market will resolve to \"No\".\n\nIf neither occurs by July 31, 2026, 11:59 PM ET, this market will resolve to 50-50.\n\nFor the purposes of this market, \"release\" refers to the game becoming publicly available for purchase or download in the US. Early access, beta versions, other forms of pre-release availability, or leaks will not count as an official release. If the release is only for certain consoles (e.g. Xbox Series X/S) it will count.\n\nThe resolution source for the release of GTA VI is official information from Rockstar Games or its parent company, Take-Two Interactive.\n\nOfficially released means that a newly released album is officially available for download or streaming (not including live events) by the resolution date.\n\nRe-releases, deluxe editions, compilations, or greatest hits albums will not count, unless they contain at least 50% tracks that have never been officially released in any format prior to the album's release.\n\nThe resolution source for the album release will be any official streaming or download site, e.g. Apple Music or Spotify.",
+   "market_slug": "new-playboi-carti-album-before-gta-vi-421",
+   "end_date_iso": "2026-07-31T00:00:00Z",
+   "game_start_time": null,
+   "seconds_delay": 0,
+   "fpmm": "",
+   "maker_base_fee": 1000,
+   "taker_base_fee": 1000,
+   "notifications_enabled": true,
+   "neg_risk": false,
+   "neg_risk_market_id": "",
+   "neg_risk_request_id": "",
+   "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/what-will-happen-before-gta-vi-7hpNkEzQEqUE.jpg",
+   "image": "https://polymarket-upload.s3.us-east-2.amazonaws.com/what-will-happen-before-gta-vi-7hpNkEzQEqUE.jpg",
+   "rewards": {
+    "rates": [
+     {
+      "asset_address": "0xc011a7e12a19f7b1f670d46f03b03f3342e82dfb",
+      "rewards_daily_rate": 0.001
+     }
+    ],
+    "min_size": 0,
+    "max_spread": 0
+   },
+   "is_50_50_outcome": false,
+   "tokens": [
+    {
+     "token_id": "88275040060084773376557187972215267513049848642895776801789297917961077894224",
+     "outcome": "Yes",
+     "price": 0.525,
+     "winner": false
+    },
+    {
+     "token_id": "94376205816022955542979635542279932967359915765455578534002478996104754801969",
+     "outcome": "No",
+     "price": 0.475,
+     "winner": false
+    }
+   ],
+   "tags": [
+    "Politics",
+    "Culture",
+    "All",
+    "GTA VI"
+   ]
+  },
+  {
+   "enable_order_book": true,
+   "active": true,
+   "closed": false,
+   "archived": false,
+   "accepting_orders": true,
+   "accepting_order_timestamp": "2026-01-22T00:29:36Z",
+   "minimum_order_size": 5,
+   "minimum_tick_size": 0.001,
+   "condition_id": "0x88049a105cba5211bba80634b33b5059489d9c49145bf1c548c9cf2760267ba5",
+   "question_id": "0xe016a384fc8cb09ea1d824f6e44943bd40966a70e9b0f2287d1590d1a6969c06",
+   "question": "Will China's annual inflation in 2026 be between 1.6% and 2.0%?",
+   "description": "This is a market about the variation of consumer prices in China over the 12-month period ending December 2026, as reported by the National Bureau of Statistics (NBS) of China.\n\nThis market will resolve according to the percentage change in the Consumer Price Index (CPI) during the 12-month period ending December 2026 according to the monthly NBS report.\n\nThe resolution source for this market will be the NBS Consumer Price Index monthly report released for December 2026 (https://www.stats.gov.cn/english/PressRelease/), currently expected to be released in January 2027. Resolution of this market will take place upon release of the aforementioned data. If no data for the specified month is released by the date the next month's data is scheduled to be released, this market will resolve based on data from the last available month.\n\nYou can find the relevant figure by locating the report for December 2026 on the Press Releases page (see: https://www.stats.gov.cn/english/PressRelease/), locating the table named \"Consumer Price Indexes in December 2026\", and finding the consumer price index figure in the column labeled \"Growth Rate Y/Y (%)\".\n\nNote: the resolution source for this market will be the official monthly NBS CPI news release which reports inflation during 12-month periods to only one decimal point (e.g. 1.9%). Thus, this is the level of precision that will be used when resolving the market. For the full release schedule, see: https://www.stats.gov.cn/english/PressRelease/ReleaseCalendar/",
+   "market_slug": "will-chinas-annual-inflation-in-2026-be-between-1pt6-and-2pt0",
+   "end_date_iso": "2027-01-10T00:00:00Z",
+   "game_start_time": null,
+   "seconds_delay": 0,
+   "fpmm": "",
+   "maker_base_fee": 1000,
+   "taker_base_fee": 1000,
+   "notifications_enabled": true,
+   "neg_risk": true,
+   "neg_risk_market_id": "0xe016a384fc8cb09ea1d824f6e44943bd40966a70e9b0f2287d1590d1a6969c00",
+   "neg_risk_request_id": "0x4e77ac658272b81888464e067af7f6a50ed65c7444bb9dd6400cd16674e4ee80",
+   "icon": "https://polymarket-upload.s3.us-east-2.amazonaws.com/november-inflation-china-monthly-4lMPpXprmgqE.jpg",
+   "image": "https://polymarket-upload.s3.us-east-2.amazonaws.com/november-inflation-china-monthly-4lMPpXprmgqE.jpg",
+   "rewards": {
+    "rates": [
+     {
+      "asset_address": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+      "rewards_daily_rate": 0.001
+     }
+    ],
+    "min_size": 50,
+    "max_spread": 0.2
+   },
+   "is_50_50_outcome": false,
+   "tokens": [
+    {
+     "token_id": "104771319366981429485700415120577243295443903901814809581466165680400541206538",
+     "outcome": "Yes",
+     "price": 0.1525,
+     "winner": false
+    },
+    {
+     "token_id": "104245136355838024681305128121831827963475099147648702619573476108649102545998",
+     "outcome": "No",
+     "price": 0.8475,
+     "winner": false
+    }
+   ],
+   "tags": [
+    "China",
+    "Inflation",
+    "Economy",
+    "CPI",
+    "World",
+    "Macro Indicators"
+   ]
+  }
+ ],
+ "next_cursor": "MTAwMA==",
+ "_truncated_from": 1000
+}
