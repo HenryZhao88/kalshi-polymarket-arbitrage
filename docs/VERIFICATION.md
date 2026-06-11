@@ -334,3 +334,51 @@ by default; structured rejections are capped per scan; every persisted scan
 pass prunes rows older than `ARB_STORAGE_RETENTION_DAYS`; and
 `arb-scanner report --cleanup-retention` prunes on demand, printing per-table
 removal counts.
+
+## 7. GOVPARTY settlement-basis divergence (verified 2026-06-11)
+
+Manual source verification of the top manual-review pair (GOVPARTYSC-26-R vs
+Polymarket condition `0x1b7fa10e…`, the same-party 2026 South Carolina
+governor markets). Sources fetched 2026-06-11:
+
+- https://api.elections.kalshi.com/trade-api/v2/markets/GOVPARTYSC-26-R
+- https://api.elections.kalshi.com/trade-api/v2/events/GOVPARTYSC-26
+- https://api.elections.kalshi.com/trade-api/v2/series/GOVPARTYSC
+- https://kalshi-public-docs.s3.amazonaws.com/contract_terms/GOVPARTY.pdf
+- https://gamma-api.polymarket.com/events?slug=south-carolina-governor-winner-2026
+- https://gamma-api.polymarket.com/markets?slug=will-the-republicans-win-the-south-carolina-governor-race-in-2026
+
+Findings:
+
+- **Kalshi (GOVPARTY family)** pays on the party of the person **sworn
+  in/inaugurated**: market rules — *"If a representative of the Republican
+  party is inaugurated as the governor … pursuant to the 2026 election"*;
+  contract terms — payout encompasses *"the person sworn in to the
+  governorship"*, a governor-elect vacancy passes to *"the party of the person
+  first sworn in as their temporary, or permanent, replacement"*, and a
+  candidate's party is locked to **election day** if they switch before
+  seating. Source Agency is the state; accelerated early resolution on 4-of-8
+  media calls (NYT, AP, DDHQ, CNN, Fox, NBC, CBS, ABC); expiration runs to the
+  swearing-in (capped one year after the vote).
+- **Polymarket** pays on the **election winner**: *"resolve according to the
+  winner of the 2026 … gubernatorial election"*, where party means **the
+  nominee** and independents are excluded *"regardless of any affiliation"*.
+  It resolves once AP, Fox News, and NBC all call the race for the same
+  candidate, else on official certification, executed through the UMA oracle
+  (bond $2,500, default dispute window, negRisk event). The structured
+  `resolutionSource` field is null — the sources exist only in the description
+  text.
+
+Conclusion: **not equivalent for arbitrage**. The two bases settle differently
+in documented scenarios (governor-elect dies/resigns/replaced before
+inauguration; a party-registered candidate running as an independent wins;
+recount flips after UMA finalization). Neither venue documents a void/50-50
+policy for a canceled election.
+
+Encoded as `settlement_basis_conflict` in
+`arb_scanner/app/markets/rule_equivalence.py`: a hard failure (rejection) only
+when the Kalshi rules text shows sworn-in/inaugurated/member-of-party language
+**and** the Polymarket rules text shows winner/nominee/race-call language,
+each side showing exactly one basis. Texts showing both bases or neither stay
+with the existing conservative checks (manual_review on missing facts). This
+check rejects; it never accepts, and acceptance thresholds are unchanged.

@@ -15,12 +15,54 @@ status at manual_review; nothing below threshold reaches the economics engine.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
 ACCEPT_THRESHOLD = 0.9
 REVIEW_THRESHOLD = 0.6
+
+# Settlement-basis divergence verified against live venue metadata on
+# 2026-06-11 (docs/VERIFICATION.md §7): Kalshi GOVPARTY-family contracts pay
+# on the party of the person SWORN IN/INAUGURATED (vacancy → first replacement
+# sworn in; party locked to election day), while Polymarket governor markets
+# pay on the called/certified ELECTION WINNER with party meaning the NOMINEE.
+# Those bases settle differently in documented scenarios (governor-elect
+# replaced before inauguration; party-registered candidate running as an
+# independent), so pairs showing one basis on each venue are not equivalent.
+_OFFICEHOLDER_BASIS = re.compile(
+    r"\binaugurat\w*|\bsworn[\s-]+in\b|\bswearing[\s-]+in\b|"
+    r"\bmember of the\b[^.]{0,60}\bparty\b",
+    re.IGNORECASE,
+)
+_ELECTION_WINNER_BASIS = re.compile(
+    r"\bwinner of the\b[^.]{0,80}\belection\b|\bnominee of the party\b|"
+    r"\bcall(?:s|ed)? the race\b",
+    re.IGNORECASE,
+)
+
+
+def settlement_basis_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect the verified Kalshi-officeholder vs Polymarket-election-winner split.
+
+    Fires only when each venue's rules text shows exactly one of the two
+    divergent bases: Kalshi sworn-in/inaugurated/member-of-party language and
+    Polymarket winner/nominee/race-call language. Texts showing both bases (or
+    neither) are ambiguous and are left to the existing conservative checks
+    rather than rejected on this evidence.
+    """
+    if not _OFFICEHOLDER_BASIS.search(kalshi_text):
+        return None
+    if not _ELECTION_WINNER_BASIS.search(poly_text):
+        return None
+    if _OFFICEHOLDER_BASIS.search(poly_text) or _ELECTION_WINNER_BASIS.search(kalshi_text):
+        return None
+    return (
+        "settlement_basis_conflict: Kalshi resolves on the officeholder sworn "
+        "in/inaugurated while Polymarket resolves on the called/certified "
+        "election winner (verified 2026-06-11, docs/VERIFICATION.md §7)"
+    )
 
 
 class MatchStatus(StrEnum):
@@ -87,6 +129,12 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
     if not kalshi.resolution_text.strip() or not poly.resolution_text.strip():
         warnings.append("market resolution text missing on at least one venue")
         missing.append("resolution_text")
+
+    # Divergent settlement bases (sworn-in officeholder vs called election
+    # winner) settle differently in documented scenarios — hard failure.
+    basis_conflict = settlement_basis_conflict(kalshi.resolution_text, poly.resolution_text)
+    if basis_conflict:
+        failures.append(basis_conflict)
 
     # Void / DNP / postponement handling.
     if kalshi.void_policy is None or poly.void_policy is None:

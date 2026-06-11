@@ -11,6 +11,7 @@ from arb_scanner.app.markets.rule_equivalence import (
     MatchStatus,
     PolymarketRuleFacts,
     decide_status,
+    settlement_basis_conflict,
     validate_rules,
 )
 
@@ -104,6 +105,91 @@ class TestValidateRules:
         )
         assert any("determination time unverified" in warning for warning in result.warnings)
         assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+
+# Live rules text fetched 2026-06-11 from the GOVPARTYSC-26-R market and the
+# matching Polymarket market (docs/VERIFICATION.md §7).
+KALSHI_GOVPARTY_RULES = (
+    "If a representative of the Republican party is inaugurated as the governor "
+    "of South Carolina pursuant to the 2026 election, then the market resolves to Yes."
+)
+POLY_GOVERNOR_RULES = (
+    "This market will resolve according to the winner of the 2026 South Carolina "
+    "gubernatorial election. A candidate shall be considered to represent a party "
+    "in the event that he or she is the nominee of the party in question. "
+    "The resolution source for this market is the Associated Press, Fox News, and "
+    "NBC. This market will resolve once all three sources call the race for the "
+    "same candidate."
+)
+
+
+class TestSettlementBasisConflict:
+    """Sworn-in/inaugurated officeholder basis vs called-election-winner basis."""
+
+    def test_detects_verified_govparty_divergence(self) -> None:
+        message = settlement_basis_conflict(KALSHI_GOVPARTY_RULES, POLY_GOVERNOR_RULES)
+        assert message is not None
+        assert "settlement_basis_conflict" in message
+
+    def test_validate_rules_rejects_even_with_missing_fields(self) -> None:
+        # Mirrors the live rows: no determination time / source / void policy.
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_GOVPARTY_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_GOVERNOR_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("settlement_basis_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_shared_winner_basis_does_not_fire(self) -> None:
+        winner_text = "Resolves according to the winner of the 2026 election."
+        assert settlement_basis_conflict(winner_text, winner_text) is None
+
+    def test_shared_officeholder_basis_does_not_fire(self) -> None:
+        sworn_text = "Resolves when a candidate is sworn in as governor."
+        assert settlement_basis_conflict(sworn_text, sworn_text) is None
+
+    def test_ambiguous_kalshi_text_with_both_bases_does_not_fire(self) -> None:
+        both = (
+            "Resolves when the winner of the 2026 election is inaugurated as governor."
+        )
+        assert settlement_basis_conflict(both, POLY_GOVERNOR_RULES) is None
+
+    def test_ambiguous_poly_text_with_both_bases_does_not_fire(self) -> None:
+        both = (
+            "Resolves according to the winner of the 2026 election, "
+            "once that person is sworn in."
+        )
+        assert settlement_basis_conflict(KALSHI_GOVPARTY_RULES, both) is None
+
+    def test_reverse_direction_does_not_fire(self) -> None:
+        # Kalshi winner-basis vs Polymarket officeholder-basis is not the
+        # verified GOVPARTY pattern; leave it to the other conservative checks.
+        assert settlement_basis_conflict(POLY_GOVERNOR_RULES, KALSHI_GOVPARTY_RULES) is None
+
+    def test_unrelated_rules_do_not_fire(self) -> None:
+        assert (
+            settlement_basis_conflict(
+                "Settles from the Coindesk BTC price index at 16:00 UTC.",
+                "Settles from the Coindesk BTC price index at 16:00 UTC.",
+            )
+            is None
+        )
+
+    def test_member_of_party_language_counts_as_officeholder_basis(self) -> None:
+        contract_terms = (
+            "The person sworn in to the governorship is a member of the Republican party."
+        )
+        assert settlement_basis_conflict(contract_terms, POLY_GOVERNOR_RULES) is not None
 
 
 class TestDecideStatus:

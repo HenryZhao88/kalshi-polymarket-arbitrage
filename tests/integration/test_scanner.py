@@ -39,6 +39,19 @@ def test_rejection_histogram_uses_one_primary_reason() -> None:
     )
 
 
+def test_settlement_basis_conflict_has_its_own_histogram_bucket() -> None:
+    reason = (
+        "settlement_basis_conflict: Kalshi resolves on the officeholder sworn "
+        "in/inaugurated while Polymarket resolves on the called/certified election winner"
+    )
+    assert _primary_rejection_bucket((reason,)) == "settlement_basis_conflict"
+    # Named conflicts outrank the catch-all and the similarity bucket.
+    assert (
+        _primary_rejection_bucket((reason, "similarity below review threshold"))
+        == "settlement_basis_conflict"
+    )
+
+
 KALSHI_MARKET = {
     "ticker": "KXBTCD-26JUN30-T70000",
     "title": "Bitcoin above $70,000 on June 30?",

@@ -488,6 +488,65 @@ class TestEvaluatePairEndToEnd:
         assert "cancelled" in excerpts["kalshi"]["sports_policy_terms"]
         assert "uma" in excerpts["polymarket"]["dispute_terms"]
 
+    @staticmethod
+    def govparty_style_markets() -> tuple[dict[str, object], dict[str, object]]:
+        """Mirrors the live GOVPARTYSC-26-R pair verified 2026-06-11.
+
+        No structured resolution_source/void_policy on either side — exactly the
+        shape that previously landed in manual_review.
+        """
+        kalshi: dict[str, object] = {
+            "ticker": "GOVPARTYSC-26-R",
+            "event_ticker": "GOVPARTYSC-26",
+            "title": "Will the Republican party win the governorship in South Carolina",
+            "close_time": "2027-11-03T15:00:00Z",
+            "expected_expiration_time": "2027-01-24T15:00:00Z",
+            "can_close_early": True,
+            "category": "Elections",
+            "rules_primary": (
+                "If a representative of the Republican party is inaugurated as the "
+                "governor of South Carolina pursuant to the 2026 election, then the "
+                "market resolves to Yes."
+            ),
+        }
+        poly: dict[str, object] = {
+            "conditionId": "0x1b7fa10e",
+            "question": "Will the Republicans win the South Carolina governor race in 2026?",
+            "clobTokenIds": '["111", "222"]',
+            "active": True,
+            "description": (
+                "This market will resolve according to the winner of the 2026 South "
+                "Carolina gubernatorial election. A candidate shall be considered to "
+                "represent a party in the event that he or she is the nominee of the "
+                "party in question. The resolution source for this market is the "
+                "Associated Press, Fox News, and NBC. This market will resolve once "
+                "all three sources call the race for the same candidate."
+            ),
+        }
+        return kalshi, poly
+
+    def test_govparty_settlement_basis_conflict_is_rejected_not_manual_review(self) -> None:
+        kalshi, poly = self.govparty_style_markets()
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        # REJECTED, therefore not MANUAL_REVIEW: the pair must not stay reviewable.
+        assert pair.status is MatchStatus.REJECTED
+        assert any("settlement_basis_conflict" in reason for reason in pair.status_reasons)
+        assert any("settlement_basis_conflict" in str(v) for v in pair.differing_fields.values())
+
+    def test_same_winner_basis_on_both_venues_is_not_basis_rejected(self) -> None:
+        # Guard: the new rule must not reject pairs where both venues use the
+        # election-winner basis; those stay with the existing conservative checks.
+        kalshi, poly = self.govparty_style_markets()
+        kalshi["rules_primary"] = (
+            "Resolves according to the winner of the 2026 South Carolina "
+            "gubernatorial election."
+        )
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert not any("settlement_basis_conflict" in reason for reason in pair.status_reasons)
+        assert pair.status is not MatchStatus.ACCEPTED  # still missing rule facts
+
     def test_title_match_but_missing_rules_is_manual_review(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")
