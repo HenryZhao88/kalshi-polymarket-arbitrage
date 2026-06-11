@@ -61,9 +61,7 @@ class ScanReport:
     )
 
     def render_lines(self) -> list[str]:
-        lines = [
-            f"pairs considered: {self.pairs_considered}, accepted: {self.pairs_accepted}"
-        ]
+        lines = [f"pairs considered: {self.pairs_considered}, accepted: {self.pairs_accepted}"]
         for pair, evaluation, reasons in self.opportunities:
             decision = "ALERT" if not reasons else f"rejected: {'; '.join(reasons)}"
             lines.append(

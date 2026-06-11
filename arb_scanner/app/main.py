@@ -22,9 +22,7 @@ from arb_scanner.app.scanner import scan_once
 def _build_sinks(settings: Settings, session: aiohttp.ClientSession) -> list[AlertSink]:
     sinks: list[AlertSink] = []
     if settings.discord_webhook_url:
-        sinks.append(
-            DiscordAlertSink(session, settings.discord_webhook_url.get_secret_value())
-        )
+        sinks.append(DiscordAlertSink(session, settings.discord_webhook_url.get_secret_value()))
     if settings.telegram_bot_token and settings.telegram_chat_id:
         sinks.append(
             TelegramAlertSink(
@@ -45,9 +43,9 @@ async def _run_pass(settings: Settings, *, verbose: bool) -> None:
             sinks=_build_sinks(settings, session),
         )
         for line in report.render_lines():
-            print(line)  # noqa: T201
+            print(line)
         if verbose and not report.opportunities:
-            print("no accepted pairs produced evaluable opportunities this pass")  # noqa: T201
+            print("no accepted pairs produced evaluable opportunities this pass")
 
 
 async def _scan_loop(settings: Settings, interval_seconds: float) -> None:

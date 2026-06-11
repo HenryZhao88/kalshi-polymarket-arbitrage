@@ -97,7 +97,7 @@ class TestTelegramSink:
         client = await aiohttp_client(app)
         assert client.session is not None
         sink = TelegramAlertSink(client.session, "token", "chat-1")
-        sink._url = str(client.make_url("/bottoken/sendMessage"))  # noqa: SLF001
+        sink._url = str(client.make_url("/bottoken/sendMessage"))
         await sink.send(PAYLOAD)
         assert received[0]["chat_id"] == "chat-1"
         assert "net" in received[0]["text"].lower()

@@ -111,13 +111,13 @@ def run_replay_cli(args: argparse.Namespace, settings: Settings) -> int:
     database_url = getattr(args, "database_url", None) or settings.database_url
     by_market = asyncio.run(load_frames(database_url))
     if not by_market:
-        print("no orderbook snapshots in storage yet — run `scan` first")  # noqa: T201
+        print("no orderbook snapshots in storage yet — run `scan` first")
         return 1
     metrics_by_market: dict[str, Any] = {}
     for market, frames in by_market.items():
         metrics = compute_metrics(replay_market(frames))
         metrics_by_market[market] = metrics
-        print(  # noqa: T201
+        print(
             f"{market}: trades={metrics.trades} alerts={metrics.alerts} "
             f"hit_rate={metrics.hit_rate:.2f} "
             f"slippage_realization={metrics.slippage_realization} "
@@ -125,5 +125,5 @@ def run_replay_cli(args: argparse.Namespace, settings: Settings) -> int:
         )
     if getattr(args, "out", None):
         render_html_report(metrics_by_market, Path(args.out))
-        print(f"report written to {args.out}")  # noqa: T201
+        print(f"report written to {args.out}")
     return 0

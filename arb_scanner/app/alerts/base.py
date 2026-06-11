@@ -29,6 +29,12 @@ class AlertPayload:
     snapshot_id: int | None
 
     def render_text(self) -> str:
+        other_fees = (
+            self.fees.total
+            - self.fees.kalshi_fee
+            - self.fees.polymarket_fee
+            - self.fees.expected_slippage
+        )
         lines = [
             f"ARB {self.direction} | {self.kalshi_ticker} <> {self.poly_condition_id[:14]}…",
             f"confidence {self.confidence:.2f} | size {self.size} | {self.depth_summary}",
@@ -36,7 +42,7 @@ class AlertPayload:
                 f"fees: kalshi ${self.fees.kalshi_fee.to_dollars()} "
                 f"poly ${self.fees.polymarket_fee.to_dollars()} "
                 f"slippage ${self.fees.expected_slippage.to_dollars()} "
-                f"other ${(self.fees.total - self.fees.kalshi_fee - self.fees.polymarket_fee - self.fees.expected_slippage).to_dollars()}"
+                f"other ${other_fees.to_dollars()}"
             ),
             (
                 f"NET ${self.net_edge.to_dollars()} | roi {self.simple_return:.2%} "

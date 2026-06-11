@@ -38,8 +38,8 @@ def from_snapshot_row(
     payload: dict[str, Any], captured_at: datetime, venue: str, market_id: str
 ) -> BookFrame:
     """Rebuild a frame from a storage.BookSnapshotRow payload (orderbook format)."""
-    bids = tuple(sorted(_levels(payload.get("bids", [])), key=lambda l: l.price, reverse=True))
-    asks = tuple(sorted(_levels(payload.get("asks", [])), key=lambda l: l.price))
+    bids = tuple(sorted(_levels(payload.get("bids", [])), key=lambda lvl: lvl.price, reverse=True))
+    asks = tuple(sorted(_levels(payload.get("asks", [])), key=lambda lvl: lvl.price))
     return BookFrame(
         captured_at=captured_at,
         book=OrderBook(
@@ -66,9 +66,11 @@ def from_orderbook_history_payload(payload: dict[str, Any], side: Side) -> list[
                     market_id=snap["asset_id"],
                     side=side,
                     bids=tuple(
-                        sorted(_levels(snap.get("bids", [])), key=lambda l: l.price, reverse=True)
+                        sorted(
+                            _levels(snap.get("bids", [])), key=lambda lvl: lvl.price, reverse=True
+                        )
                     ),
-                    asks=tuple(sorted(_levels(snap.get("asks", [])), key=lambda l: l.price)),
+                    asks=tuple(sorted(_levels(snap.get("asks", [])), key=lambda lvl: lvl.price)),
                     timestamp_ms=ts_ms,
                 ),
             )

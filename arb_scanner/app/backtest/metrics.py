@@ -89,8 +89,6 @@ def compute_metrics(records: list[TradeRecord]) -> BacktestMetrics:
         ),
         slippage_realization=(real_slip / est_slip) if est_slip else None,
         capital_utilization=(total_net / total_locked) if total_locked else Decimal(0),
-        time_weighted_return=(
-            total_net / locked_days * 365 if locked_days else Decimal(0)
-        ),
+        time_weighted_return=(total_net / locked_days * 365 if locked_days else Decimal(0)),
         rejection_histogram=dict(histogram),
     )
