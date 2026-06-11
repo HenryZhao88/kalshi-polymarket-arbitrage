@@ -210,7 +210,9 @@ def cli(argv: list[str] | None = None) -> int:
     )
     replay = sub.add_parser("replay", help="re-evaluate stored paired opportunity snapshots")
     replay.add_argument("--database-url", default=None)
-    report = sub.add_parser("report", help="render paired-snapshot replay metrics")
+    report = sub.add_parser(
+        "report", help="render persisted candidate diagnostics or replay metrics"
+    )
     report.add_argument("--database-url", default=None)
     report.add_argument("--out", default="reports/report.html")
     report_mode = report.add_mutually_exclusive_group()

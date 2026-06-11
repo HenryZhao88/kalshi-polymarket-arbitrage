@@ -6,7 +6,7 @@
 # Persistence was enabled by default. No external alert sink was enabled, no pair
 # was accepted, no order-book economics ran, and no order placement exists.
 Gamma discovery pages=5 fetched=500 unique=500
-markets: Kalshi discovered=64662 scannable=64660, Polymarket discovered=500 scannable=500 pages=5 fetched=500
+markets: Kalshi discovered=64660 scannable=64658, Polymarket discovered=500 scannable=500 pages=5 fetched=500
 candidate funnel: raw_title=18615 structured=2482 manual_review=14 accepted=0 rejected=18601
 rejections by reason: determination_time_conflict=15627, market_type_conflict=2297, similarity_below_review_threshold=595, threshold_conflict=44, event_date_conflict=20, outcome_entity_conflict=13, other_rule_conflict=5
 
