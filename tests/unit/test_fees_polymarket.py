@@ -14,6 +14,7 @@ from arb_scanner.app.fees.polymarket import (
     CATEGORY_TAKER_RATES,
     FeeRateSource,
     FeeSchedule,
+    fee_schedule_from_metadata,
     maker_rebate,
     polymarket_taker_fee,
     polymarket_taker_fee_raw,
@@ -105,6 +106,20 @@ class TestFeeResolution:
         resolved = resolve_fee_schedule(market_schedule=market, category="sports")
         assert resolved.rate == D("0.07")
         assert resolved.source is FeeRateSource.MARKET_METADATA
+
+    def test_gamma_fee_schedule_is_parsed(self) -> None:
+        schedule = fee_schedule_from_metadata(
+            {"feeSchedule": {"rate": "0.05", "exponent": 1, "takerOnly": True}}
+        )
+        assert schedule is not None
+        assert schedule.rate == D("0.05")
+        assert schedule.exponent == D(1)
+        assert schedule.source is FeeRateSource.MARKET_METADATA
+
+    def test_compact_clob_fee_schedule_is_parsed(self) -> None:
+        schedule = fee_schedule_from_metadata({"fd": {"r": "0.05", "e": "1", "to": True}})
+        assert schedule is not None
+        assert schedule.rate == D("0.05")
 
     def test_category_fallback_is_flagged(self) -> None:
         resolved = resolve_fee_schedule(market_schedule=None, category="sports")

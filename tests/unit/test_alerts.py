@@ -4,11 +4,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from decimal import Decimal
 from typing import Any
 
+import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from arb_scanner.app.alerts.base import AlertPayload
+from arb_scanner.app.alerts.base import AlertDeliveryError, AlertPayload
 from arb_scanner.app.alerts.discord import DiscordAlertSink
 from arb_scanner.app.alerts.telegram import TelegramAlertSink
 from arb_scanner.app.fees.profit import FeeBreakdown
@@ -66,6 +67,12 @@ class TestRenderText:
         assert "break-even" in text
         assert "snapshot #42" in text
 
+    def test_persisted_payload_contains_cost_components(self) -> None:
+        payload = PAYLOAD.to_dict()
+        assert payload["kalshi_fee_dollars"] == "0.63"
+        assert payload["polymarket_fee_dollars"] == "0.1164"
+        assert payload["unknown_cost_buffer_dollars"] == "0"
+
 
 class TestDiscordSink:
     async def test_posts_to_webhook(self, aiohttp_client: AiohttpClientFn) -> None:
@@ -82,6 +89,28 @@ class TestDiscordSink:
         sink = DiscordAlertSink(client.session, str(client.make_url("/webhook")))
         await sink.send(PAYLOAD)
         assert "KXBTCD" in received[0]["content"]
+
+    async def test_error_does_not_expose_webhook_url(self, aiohttp_client: AiohttpClientFn) -> None:
+        app = web.Application()
+
+        async def hook(request: web.Request) -> web.Response:
+            return web.Response(status=500, text="private response body")
+
+        app.router.add_post("/private-webhook-token", hook)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        sink = DiscordAlertSink(client.session, str(client.make_url("/private-webhook-token")))
+        with pytest.raises(AlertDeliveryError) as error:
+            await sink.send(PAYLOAD)
+        assert "private-webhook-token" not in str(error.value)
+        assert "private response body" not in str(error.value)
+
+    async def test_transport_error_is_sanitized(self) -> None:
+        async with aiohttp.ClientSession() as session:
+            sink = DiscordAlertSink(session, "private-token-not-a-url")
+            with pytest.raises(AlertDeliveryError) as error:
+                await sink.send(PAYLOAD)
+        assert "private-token" not in str(error.value)
 
 
 class TestTelegramSink:
@@ -101,3 +130,19 @@ class TestTelegramSink:
         await sink.send(PAYLOAD)
         assert received[0]["chat_id"] == "chat-1"
         assert "net" in received[0]["text"].lower()
+
+    async def test_error_does_not_expose_bot_token(self, aiohttp_client: AiohttpClientFn) -> None:
+        app = web.Application()
+
+        async def fail(request: web.Request) -> web.Response:
+            return web.Response(status=401, text="token rejected")
+
+        app.router.add_post("/botprivate-token/sendMessage", fail)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        sink = TelegramAlertSink(client.session, "private-token", "chat-1")
+        sink._url = str(client.make_url("/botprivate-token/sendMessage"))
+        with pytest.raises(AlertDeliveryError) as error:
+            await sink.send(PAYLOAD)
+        assert "private-token" not in str(error.value)
+        assert "token rejected" not in str(error.value)

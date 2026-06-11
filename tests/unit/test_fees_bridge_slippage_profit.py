@@ -81,12 +81,15 @@ class TestSlippageModels:
 
     def test_depth_impact_vwap_vs_top(self) -> None:
         # 100 @ 0.40 then 200 @ 0.42: filling 300 costs 124.00 vs 120.00 at top
-        levels = [BookLevel(price=D("0.40"), size=100), BookLevel(price=D("0.42"), size=200)]
+        levels = [
+            BookLevel(price=D("0.40"), size=D(100)),
+            BookLevel(price=D("0.42"), size=D(200)),
+        ]
         model = DepthImpactSlippage(levels=levels)
         assert model.estimate(size=300, quoted_edge=Money.zero()) == Money.from_dollars("4.00")
 
     def test_depth_impact_insufficient_depth_raises(self) -> None:
-        levels = [BookLevel(price=D("0.40"), size=100)]
+        levels = [BookLevel(price=D("0.40"), size=D(100))]
         model = DepthImpactSlippage(levels=levels)
         with pytest.raises(ValueError, match="depth"):
             model.estimate(size=200, quoted_edge=Money.zero())
@@ -104,9 +107,16 @@ class TestProfitComposition:
         fees = FeeBreakdown(
             kalshi_fee=Money.from_dollars("0.63"),
             polymarket_fee=Money.from_dollars("0.1164"),
+            bridge_cost=Money.from_dollars("0.01"),
+            withdrawal_cost=Money.from_dollars("0.02"),
+            gas_cost=Money.from_dollars("0.03"),
+            processor_cost=Money.from_dollars("0.04"),
+            conversion_cost=Money.from_dollars("0.05"),
+            expected_slippage=Money.from_dollars("0.06"),
+            unknown_cost_buffer=Money.from_dollars("0.07"),
         )
         net = net_profit(gross=Money.from_dollars("7.00"), fees=fees)
-        assert net == Money.from_dollars("6.2536")
+        assert net == Money.from_dollars("5.9736")
 
     def test_fee_breakdown_total_excludes_rebates(self) -> None:
         fees = FeeBreakdown(

@@ -1,11 +1,15 @@
-pairs considered: 1, accepted: 1
-[KXBTCD-26JUN30-T70000 <> 0xabc…] kalshi_yes_poly_no size=100 k_vwap=0.9000 p_vwap=0.03 | fees: K $0.63 P $0.2037 slip $0.5 | net $5.6663 (roi 6.01%, annual 73.1%) → ALERT
-[KXBTCD-26JUN30-T70000 <> 0xabc…] kalshi_no_poly_yes size=100 k_vwap=0.9500 p_vwap=0.99 | fees: K $0.34 P $0.0693 slip $0.5 | net $-94.9093 (roi -48.69%, annual -592.4%) → rejected: net $-94.9093 < min $1; ROI -0.4869 < min 0.01; annualized -5.9244 < min 0.10
+# Deterministic mocked scan example. This is not a live market or profit claim.
+# All non-trading cost components are explicitly set to zero by the fixture.
+markets: Kalshi discovered=1 scannable=1, Polymarket discovered=1 scannable=1 pages=1 fetched=1
+candidate funnel: raw_title=1 structured=1 manual_review=0 accepted=1 rejected=0
+rejections: none
+[KXBTCD-26JUN30-T70000 <> 0xabc...] kalshi_yes_poly_no requested=100 executable=100 k_vwap=0.9000 p_vwap=0.03 | fees: K $0.63 P $0.1455 slip $0.5 unknown $0 | net $5.7245 (roi 6.07%, annual 115.6%) -> ALERT
+[KXBTCD-26JUN30-T70000 <> 0xabc...] kalshi_no_poly_yes requested=100 executable=100 k_vwap=0.9500 p_vwap=0.99 | fees: K $0.34 P $0.0495 slip $0.5 unknown $0 | net $-94.8895 (roi -48.69%, annual -926.6%) -> rejected: net $-94.8895 < min $1; ROI -0.4869 < min 0.01; annualized -9.2665 < min 0.10
 
 --- alert payload ---
-ARB kalshi_yes_poly_no | KXBTCD-26JUN30-T70000 <> 0xabc…
-confidence 0.94 | size 100 | k_levels=1 p_levels=1
-fees: kalshi $0.63 poly $0.2037 slippage $0.5 other $0
-NET $5.6663 | roi 6.01% | annualized 73.1%
-break-even: 5.67c/share slippage or $5.6663 extra fees
+ARB kalshi_yes_poly_no | KXBTCD-26JUN30-T70000 <> 0xabc...
+confidence 0.94 | size 100 | requested=100 executable=100 fill=100.00% k_levels=1 p_levels=1
+fees: kalshi $0.63 poly $0.1455 slippage $0.5 other $0
+NET $5.7245 | roi 6.07% | annualized 115.6%
+break-even: 5.72c/share slippage or $5.7245 extra fees
 no snapshot

@@ -11,7 +11,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from arb_scanner.app.clients.base import NotFoundError, RateLimitedError
+from arb_scanner.app.clients.base import NotFoundError, RateLimitedError, VenueError
 from arb_scanner.app.clients.geoblock import (
     ExecutionDisabledError,
     GeoblockClient,
@@ -19,6 +19,7 @@ from arb_scanner.app.clients.geoblock import (
 )
 from arb_scanner.app.clients.kalshi_rest import KalshiRestClient
 from arb_scanner.app.clients.polymarket_clob import PolymarketClobClient
+from arb_scanner.app.clients.polymarket_gamma import PolymarketGammaClient
 from arb_scanner.app.config import Mode, Settings
 
 FIXTURES = Path("tests/fixtures/live_2026-06-11")
@@ -72,6 +73,46 @@ class TestKalshiRest:
         kalshi = await make_kalshi(aiohttp_client)
         result = await kalshi.get_markets(limit=3)
         assert "markets" in result and len(result["markets"]) > 0
+
+    async def test_get_all_markets_paginates_and_excludes_mve(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        requests: list[dict[str, str]] = []
+
+        async def markets(request: web.Request) -> web.Response:
+            requests.append(dict(request.query))
+            assert request.query["mve_filter"] == "exclude"
+            if request.query.get("cursor") is None:
+                return web.json_response({"markets": [{"ticker": "FIRST"}], "cursor": "page-2"})
+            assert request.query["cursor"] == "page-2"
+            return web.json_response({"markets": [{"ticker": "SECOND"}], "cursor": ""})
+
+        app = web.Application()
+        app.router.add_get("/trade-api/v2/markets", markets)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(client.session, base_url=str(client.make_url("")))
+
+        result = await kalshi.get_all_markets(limit=100, mve_filter="exclude")
+
+        assert [market["ticker"] for market in result] == ["FIRST", "SECOND"]
+        assert len(requests) == 2
+        assert requests[1]["cursor"] == "page-2"
+
+    async def test_get_all_markets_rejects_repeated_cursor(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        async def markets(request: web.Request) -> web.Response:
+            return web.json_response({"markets": [], "cursor": "same"})
+
+        app = web.Application()
+        app.router.add_get("/trade-api/v2/markets", markets)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(client.session, base_url=str(client.make_url("")))
+
+        with pytest.raises(VenueError, match="repeated cursor"):
+            await kalshi.get_all_markets()
 
     async def test_get_orderbook_fixture_roundtrip(self, aiohttp_client: AiohttpClientFn) -> None:
         kalshi = await make_kalshi(aiohttp_client)
@@ -135,6 +176,102 @@ class TestPolymarketClob:
         clob = PolymarketClobClient(client.session, base_url=str(client.make_url("")))
         payload = await clob.get_book("78433024518676680431174478322854148606578065650008")
         assert payload["bids"]
+
+    async def test_get_market_info_uses_clob_market_route(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        app = web.Application()
+
+        async def market_info(request: web.Request) -> web.Response:
+            assert request.match_info["condition_id"] == "0xabc"
+            return web.json_response({"fd": {"r": "0.05", "e": "1", "to": True}})
+
+        app.router.add_get("/clob-markets/{condition_id}", market_info)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        clob = PolymarketClobClient(client.session, base_url=str(client.make_url("")))
+        payload = await clob.get_market_info("0xabc")
+        assert payload["fd"]["r"] == "0.05"
+
+
+class TestPolymarketGamma:
+    async def test_keyset_pagination_fetches_multiple_pages(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        cursors: list[str | None] = []
+
+        async def markets(request: web.Request) -> web.Response:
+            cursor = request.query.get("after_cursor")
+            cursors.append(cursor)
+            if cursor is None:
+                return web.json_response(
+                    {
+                        "markets": [{"conditionId": "first"}],
+                        "next_cursor": "page-2",
+                    }
+                )
+            return web.json_response({"markets": [{"conditionId": "second"}], "next_cursor": ""})
+
+        app = web.Application()
+        app.router.add_get("/markets/keyset", markets)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        gamma = PolymarketGammaClient(client.session, base_url=str(client.make_url("")))
+
+        result = await gamma.get_all_markets(page_size=100, max_pages=5, max_markets=500)
+
+        assert [market["conditionId"] for market in result.markets] == ["first", "second"]
+        assert result.pages_fetched == 2
+        assert result.total_fetched == 2
+        assert cursors == [None, "page-2"]
+
+    async def test_keyset_pagination_rejects_repeated_cursor(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        calls = 0
+
+        async def markets(request: web.Request) -> web.Response:
+            nonlocal calls
+            calls += 1
+            return web.json_response(
+                {
+                    "markets": [{"conditionId": f"market-{calls}"}],
+                    "next_cursor": "same",
+                }
+            )
+
+        app = web.Application()
+        app.router.add_get("/markets/keyset", markets)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        gamma = PolymarketGammaClient(client.session, base_url=str(client.make_url("")))
+
+        with pytest.raises(VenueError, match="repeated cursor"):
+            await gamma.get_all_markets()
+
+    async def test_keyset_pagination_rejects_repeated_page(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        calls = 0
+
+        async def markets(request: web.Request) -> web.Response:
+            nonlocal calls
+            calls += 1
+            return web.json_response(
+                {
+                    "markets": [{"conditionId": "duplicate"}],
+                    "next_cursor": f"cursor-{calls}",
+                }
+            )
+
+        app = web.Application()
+        app.router.add_get("/markets/keyset", markets)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        gamma = PolymarketGammaClient(client.session, base_url=str(client.make_url("")))
+
+        with pytest.raises(VenueError, match="repeated a market page"):
+            await gamma.get_all_markets()
 
 
 class TestGeoblockGate:

@@ -2,6 +2,39 @@
 
 You are a senior Python systems engineer and market-structure analyst building a production-minded cross-venue arbitrage scanner between Kalshi and Polymarket.
 
+## Implementation status (2026-06-11)
+
+This file is the target specification, not a declaration that every item is complete.
+The current repository is a discovery prototype and remains unsuitable for live trading.
+
+Implemented in the scan path: paginated non-MVE Kalshi discovery, bounded Gamma
+keyset pagination, normalized Gamma metadata, candidate-funnel diagnostics, persisted
+manual-review/rejection evidence, typed market classification, conflict-only ticker
+inference, retention controls, public books, conservative rule gating, depth-adjusted two-leg economics,
+per-market Polymarket fee metadata, explicit configured cost components, risk controls,
+scan-session exposure, file kill switch, alerts, and optional persistence enabled by
+default.
+
+Partial: market rule extraction, Kalshi fee overrides, non-trading cost sourcing,
+historical replay, and long-lived exposure accounting. Unknown rule or cost facts fail
+closed unless an operator explicitly enables the corresponding override.
+
+Ticker-derived dates, offices, states, families, and strikes are provenance-tagged
+diagnostics. They can reject an obvious conflict but can never establish equivalence or
+move a pair to `accepted` without affirmative venue metadata and rule evidence.
+
+Status semantics: only `accepted` candidates are eligible to reach economics.
+`manual_review` candidates have missing critical rule facts and are NOT TRADE SAFE;
+`rejected` candidates have conflicts or insufficient similarity. Hypothetical edge is
+diagnostic output, not an arbitrage or profitability claim.
+
+Experimental: isolated-book fill simulation. The CLI replay path only accepts complete
+paired opportunity snapshots and reports estimated economics, not realized profit.
+
+Disabled for safety: external dry-run alerts are off by default. Live order placement is
+not implemented, the CLI never invokes an order router, and the router deliberately
+raises `NotImplementedError` after its eligibility gate.
+
 ## Prime directives
 
 1. **Official docs are ground truth.** Before writing any code that touches an API or fee, fetch and read the current official documentation: Kalshi fee schedule, Kalshi help-center funding pages, Kalshi REST/WS auth + rate-limit docs, Kalshi market/orderbook docs; Polymarket fees page, CLOB/Gamma/WS docs, bridge quote docs, geographic-restrictions page, rate-limit docs. Record every URL, retrieval date, and the exact values you relied on in `docs/VERIFICATION.md`.
@@ -123,7 +156,9 @@ Sanity check against these reference scenarios (recompute with your verified rat
 ## Phase 5 — Alerts, persistence, CLI
 
 - Discord, Telegram, email alert adapters with a common payload: pair, confidence, depth summary, fee breakdown, net edge, annualized return, break-evens, snapshot ID.
-- CLI: `scan` (live discovery loop), `dry-run` (one pass, verbose console output), `replay`, `report`.
+- CLI: `scan` (live discovery loop), `dry-run` (one pass, verbose console output and
+  optional unsafe manual-review diagnostics), `replay`, and persisted diagnostic/replay
+  `report` modes.
 - Dockerfile + docker-compose; README covering setup, env vars, keys, tests, VPS deployment, limitations, compliance notes.
 
 ## Phase 6 — Backtest and simulation

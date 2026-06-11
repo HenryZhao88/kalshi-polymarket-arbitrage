@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from arb_scanner.app.backtest.datasets import (
     BookFrame,
     from_orderbook_history_payload,
@@ -12,7 +14,14 @@ from arb_scanner.app.backtest.datasets import (
 )
 from arb_scanner.app.backtest.fills import FillOutcome, FillSimulator
 from arb_scanner.app.backtest.metrics import TradeRecord, compute_metrics
+from arb_scanner.app.backtest.replay import (
+    PairedSnapshotRequiredError,
+    paired_snapshot_is_complete,
+    replay_paired_opportunity,
+    require_paired_snapshots,
+)
 from arb_scanner.app.execution.simulator import simulate_two_leg
+from arb_scanner.app.storage.models import OpportunityRow
 from arb_scanner.app.types import BookLevel, Money, OrderBook, Side, Venue
 
 D = Decimal
@@ -106,6 +115,64 @@ class TestTwoLegSimulation:
         )
         assert result.both_filled
         assert result.matched_size == D(60)  # leg-size mismatch → partial-fill exposure
+
+
+class TestPairedReplay:
+    def test_replay_requires_complete_paired_snapshots(self) -> None:
+        assert not paired_snapshot_is_complete({"format": "orderbook"})
+        with pytest.raises(PairedSnapshotRequiredError, match="dry-run"):
+            require_paired_snapshots([])
+
+    def test_replays_two_leg_economics(self) -> None:
+        def snapshot(venue: str, market_id: str, side: str, ask: str) -> dict[str, object]:
+            return {
+                "format": "orderbook",
+                "venue": venue,
+                "market_id": market_id,
+                "side": side,
+                "bids": [],
+                "asks": [[ask, "100"]],
+                "timestamp_ms": 1781178206000,
+            }
+
+        row = OpportunityRow(
+            pair_id=None,
+            direction="kalshi_yes_poly_no",
+            size="100",
+            gross_micros=7_000_000,
+            net_micros=6_253_600,
+            fee_breakdown={
+                "bridge_cost": "0",
+                "withdrawal_cost": "0",
+                "gas_cost": "0",
+                "processor_cost": "0",
+                "conversion_cost": "0",
+                "slippage_cost": "0",
+                "unknown_cost_buffer": "0",
+            },
+            assumptions={
+                "requested_size": 100,
+                "hold_days": "30",
+                "polymarket_fee_rate": "0.04",
+                "polymarket_fee_exponent": "1",
+                "polymarket_fee_source": "market_metadata",
+            },
+            book_snapshot={
+                "format": "paired_opportunity",
+                "kalshi_yes": snapshot("kalshi", "K", "yes", "0.90"),
+                "kalshi_no": snapshot("kalshi", "K", "no", "0.95"),
+                "poly_yes": snapshot("polymarket", "YES", "yes", "0.99"),
+                "poly_no": snapshot("polymarket", "NO", "no", "0.03"),
+            },
+            decision="alerted",
+            rejection_reason=None,
+            created_at=T0,
+        )
+        record = replay_paired_opportunity(row)
+        assert record.gross == Money.from_dollars("7")
+        assert record.net_estimated == Money.from_dollars("6.2536")
+        assert record.alerted
+        assert record.net_realized is None
 
 
 class TestMetrics:

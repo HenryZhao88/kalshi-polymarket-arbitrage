@@ -33,6 +33,7 @@ class SimilarityResult:
     score: float  # [0, 1]
     stage: MatchStage
     structured_conflicts: tuple[str, ...] = field(default=())
+    matched_tokens: tuple[str, ...] = field(default=())
 
 
 def similarity(
@@ -42,7 +43,8 @@ def similarity(
     determination_time_a: datetime | None = None,
     determination_time_b: datetime | None = None,
 ) -> SimilarityResult:
-    fa, fb = parse_features(title_a), parse_features(title_b)
+    fa = parse_features(title_a, reference_time=determination_time_a)
+    fb = parse_features(title_b, reference_time=determination_time_b)
 
     conflicts: list[str] = []
     agreements = 0
@@ -65,22 +67,42 @@ def similarity(
             agreements += 1
         else:
             conflicts.append(f"determination_time {determination_time_a} != {determination_time_b}")
+    if fa.event_date is not None and fb.event_date is not None:
+        comparable += 1
+        if fa.event_date == fb.event_date:
+            agreements += 1
+        else:
+            conflicts.append(f"event_date {fa.event_date} != {fb.event_date}")
 
     fuzzy = _fuzzy_ratio(fa.normalized_title, fb.normalized_title)
     union = fa.tokens | fb.tokens
     overlap = len(fa.tokens & fb.tokens) / len(union) if union else 0.0
+    matched_tokens = tuple(sorted(fa.tokens & fb.tokens))
 
     if comparable >= 2 and agreements == comparable and fuzzy >= 0.5:
         # exact structured agreement on every comparable field
         score = max(fuzzy, 0.7) + 0.3 * (1 - max(fuzzy, 0.7))
-        return SimilarityResult(score=score, stage=MatchStage.STRUCTURED)
+        return SimilarityResult(
+            score=score,
+            stage=MatchStage.STRUCTURED,
+            matched_tokens=matched_tokens,
+        )
     if conflicts:
         # hard structured disagreement caps the score regardless of text overlap
         return SimilarityResult(
             score=min(fuzzy, 0.5) * 0.5,
             stage=MatchStage.TOKEN_OVERLAP,
             structured_conflicts=tuple(conflicts),
+            matched_tokens=matched_tokens,
         )
     if fuzzy >= 0.6:
-        return SimilarityResult(score=fuzzy, stage=MatchStage.FUZZY)
-    return SimilarityResult(score=max(overlap, fuzzy * 0.8), stage=MatchStage.TOKEN_OVERLAP)
+        return SimilarityResult(
+            score=fuzzy,
+            stage=MatchStage.FUZZY,
+            matched_tokens=matched_tokens,
+        )
+    return SimilarityResult(
+        score=max(overlap, fuzzy * 0.8),
+        stage=MatchStage.TOKEN_OVERLAP,
+        matched_tokens=matched_tokens,
+    )

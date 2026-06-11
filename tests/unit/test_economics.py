@@ -155,6 +155,9 @@ class TestDepthAdjustment:
         )
         assert evaluation is not None
         assert evaluation.size == 40
+        assert evaluation.requested_size == 100
+        assert evaluation.executable_size == 40
+        assert evaluation.fill_fraction == D("0.4")
         assert evaluation.partial_fill_risk
 
     def test_no_depth_returns_none(self) -> None:

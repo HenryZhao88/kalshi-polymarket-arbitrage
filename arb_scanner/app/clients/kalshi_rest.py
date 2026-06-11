@@ -20,7 +20,7 @@ import aiohttp
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from arb_scanner.app.clients.base import CircuitBreaker, RestClient, TokenBucket
+from arb_scanner.app.clients.base import CircuitBreaker, RestClient, TokenBucket, VenueError
 
 PROD_BASE_URL = "https://api.elections.kalshi.com"
 DEMO_BASE_URL = "https://demo-api.kalshi.co"
@@ -91,6 +91,7 @@ class KalshiRestClient:
         status: str | None = "open",
         series_ticker: str | None = None,
         cursor: str | None = None,
+        mve_filter: str | None = None,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"limit": limit}
         if status:
@@ -99,8 +100,41 @@ class KalshiRestClient:
             params["series_ticker"] = series_ticker
         if cursor:
             params["cursor"] = cursor
+        if mve_filter:
+            params["mve_filter"] = mve_filter
         result: dict[str, Any] = await self._get("/markets", params)
         return result
+
+    async def get_all_markets(
+        self,
+        *,
+        limit: int = 1000,
+        status: str | None = "open",
+        series_ticker: str | None = None,
+        mve_filter: str | None = "exclude",
+        max_pages: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return all pages, failing on repeated cursors or an excessive page count."""
+        markets: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        for _ in range(max_pages):
+            page = await self.get_markets(
+                limit=limit,
+                status=status,
+                series_ticker=series_ticker,
+                cursor=cursor,
+                mve_filter=mve_filter,
+            )
+            markets.extend(page.get("markets", []))
+            next_cursor = str(page.get("cursor") or "")
+            if not next_cursor:
+                return markets
+            if next_cursor in seen_cursors:
+                raise VenueError(f"Kalshi pagination repeated cursor {next_cursor!r}")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        raise VenueError(f"Kalshi market pagination exceeded {max_pages} pages")
 
     async def get_orderbook(self, ticker: str, depth: int | None = None) -> dict[str, Any]:
         params = {"depth": depth} if depth is not None else None

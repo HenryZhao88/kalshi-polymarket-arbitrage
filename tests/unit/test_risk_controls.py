@@ -102,6 +102,17 @@ def test_confidence_fill_hold_age() -> None:
     assert "quote age" in joined
 
 
+def test_unknown_hold_and_quote_age_fail_closed() -> None:
+    reasons = check(
+        good_opp(hold_days=None, quote_age_seconds=None),
+        RiskLimits(),
+        ExposureTracker(),
+        KillSwitch(),
+    )
+    assert "hold time unknown" in reasons
+    assert "quote age unknown" in reasons
+
+
 def test_category_allowlist() -> None:
     limits = RiskLimits(category_allowlist=frozenset({"sports"}))
     reasons = check(good_opp(category="crypto"), limits, ExposureTracker(), KillSwitch())

@@ -23,6 +23,8 @@ class RiskLimits:
     max_hold_days: Decimal = Decimal(90)
     max_quote_age_seconds: float = 30.0
     category_allowlist: frozenset[str] | None = None  # None = all categories
+    allow_unknown_hold_time: bool = False
+    allow_unknown_quote_age: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,8 +37,8 @@ class OpportunityRisk:
     annualized_return: Decimal
     match_confidence: float
     fill_fraction: Decimal
-    hold_days: Decimal
-    quote_age_seconds: float
+    hold_days: Decimal | None
+    quote_age_seconds: float | None
     category: str | None
 
 
@@ -74,9 +76,13 @@ def check(
         reasons.append(f"confidence {opp.match_confidence} < min {limits.min_match_confidence}")
     if opp.fill_fraction < limits.min_fill_fraction:
         reasons.append(f"fill fraction {opp.fill_fraction} < min {limits.min_fill_fraction}")
-    if opp.hold_days > limits.max_hold_days:
+    if opp.hold_days is None and not limits.allow_unknown_hold_time:
+        reasons.append("hold time unknown")
+    elif opp.hold_days is not None and opp.hold_days > limits.max_hold_days:
         reasons.append(f"hold {opp.hold_days}d > max {limits.max_hold_days}d")
-    if opp.quote_age_seconds > limits.max_quote_age_seconds:
+    if opp.quote_age_seconds is None and not limits.allow_unknown_quote_age:
+        reasons.append("quote age unknown")
+    elif opp.quote_age_seconds is not None and opp.quote_age_seconds > limits.max_quote_age_seconds:
         reasons.append(
             f"quote age {opp.quote_age_seconds:.1f}s > max {limits.max_quote_age_seconds}s"
         )

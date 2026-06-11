@@ -41,6 +41,13 @@ class PolymarketClobClient:
         result: dict[str, Any] = await self._rest.request_json("GET", f"/markets/{condition_id}")
         return result
 
+    async def get_market_info(self, condition_id: str) -> dict[str, Any]:
+        """Return CLOB-level market parameters, including the `fd` fee curve."""
+        result: dict[str, Any] = await self._rest.request_json(
+            "GET", f"/clob-markets/{condition_id}"
+        )
+        return result
+
     async def get_book(self, token_id: str) -> dict[str, Any]:
         await self._book_window.acquire()
         result: dict[str, Any] = await self._rest.request_json(

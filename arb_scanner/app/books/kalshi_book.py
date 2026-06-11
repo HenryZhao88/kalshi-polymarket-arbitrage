@@ -36,14 +36,18 @@ class KalshiBook:
     market_ticker: str
     yes_bids: Ladder
     no_bids: Ladder
+    timestamp_ms: int | None = None
 
     @classmethod
-    def from_rest_payload(cls, market_ticker: str, payload: dict[str, Any]) -> KalshiBook:
+    def from_rest_payload(
+        cls, market_ticker: str, payload: dict[str, Any], *, timestamp_ms: int | None = None
+    ) -> KalshiBook:
         book = payload["orderbook_fp"]
         return cls(
             market_ticker=market_ticker,
             yes_bids=_parse_ladder(book.get("yes_dollars")),
             no_bids=_parse_ladder(book.get("no_dollars")),
+            timestamp_ms=timestamp_ms,
         )
 
     @classmethod
@@ -52,6 +56,7 @@ class KalshiBook:
             market_ticker=msg["market_ticker"],
             yes_bids=_parse_ladder(msg.get("yes_dollars_fp")),
             no_bids=_parse_ladder(msg.get("no_dollars_fp")),
+            timestamp_ms=int(msg["ts_ms"]) if msg.get("ts_ms") is not None else None,
         )
 
     def view(self, side: Side) -> OrderBook:
@@ -65,6 +70,7 @@ class KalshiBook:
             side=side,
             bids=own,
             asks=_complement(other),
+            timestamp_ms=self.timestamp_ms,
         )
 
     @property

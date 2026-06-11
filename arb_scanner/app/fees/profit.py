@@ -28,6 +28,7 @@ class FeeBreakdown:
     conversion_cost: Money = field(default_factory=Money.zero)
     gas_cost: Money = field(default_factory=Money.zero)
     expected_slippage: Money = field(default_factory=Money.zero)
+    unknown_cost_buffer: Money = field(default_factory=Money.zero)
     latency_miss: Money = field(default_factory=Money.zero)
     optional_rebates: Money = field(default_factory=Money.zero)
 
@@ -42,8 +43,14 @@ class FeeBreakdown:
             + self.conversion_cost
             + self.gas_cost
             + self.expected_slippage
+            + self.unknown_cost_buffer
             + self.latency_miss
         )
+
+    @property
+    def slippage_cost(self) -> Money:
+        """Explicit alias used by persisted candidate records and documentation."""
+        return self.expected_slippage
 
 
 def gross_profit(size: int, leg1_price_vwap: Decimal, leg2_price_vwap: Decimal) -> Money:

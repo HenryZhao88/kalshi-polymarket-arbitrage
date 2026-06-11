@@ -86,17 +86,17 @@ class TestMoneyRounding:
 
 class TestBookLevel:
     def test_price_is_probability(self) -> None:
-        lvl = BookLevel(price=Decimal("0.61"), size=250)
+        lvl = BookLevel(price=Decimal("0.61"), size=Decimal(250))
         assert lvl.price == Decimal("0.61")
         assert lvl.size == 250
 
     def test_rejects_price_out_of_range(self) -> None:
         with pytest.raises(ValueError):
-            BookLevel(price=Decimal("1.5"), size=10)
+            BookLevel(price=Decimal("1.5"), size=Decimal(10))
 
     def test_rejects_negative_size(self) -> None:
         with pytest.raises(ValueError):
-            BookLevel(price=Decimal("0.5"), size=-1)
+            BookLevel(price=Decimal("0.5"), size=Decimal(-1))
 
 
 def test_side_complement() -> None:

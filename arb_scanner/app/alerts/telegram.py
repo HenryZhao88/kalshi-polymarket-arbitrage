@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import aiohttp
 
-from arb_scanner.app.alerts.base import AlertPayload
+from arb_scanner.app.alerts.base import AlertDeliveryError, AlertPayload
 
 
 class TelegramAlertSink:
@@ -14,8 +14,14 @@ class TelegramAlertSink:
         self._chat_id = chat_id
 
     async def send(self, payload: AlertPayload) -> None:
-        async with self._session.post(
-            self._url,
-            json={"chat_id": self._chat_id, "text": payload.render_text()},
-        ) as resp:
-            resp.raise_for_status()
+        try:
+            async with self._session.post(
+                self._url,
+                json={"chat_id": self._chat_id, "text": payload.render_text()},
+            ) as resp:
+                if resp.status >= 400:
+                    raise AlertDeliveryError(f"Telegram alert failed with HTTP {resp.status}")
+        except AlertDeliveryError:
+            raise
+        except (aiohttp.ClientError, TimeoutError):
+            raise AlertDeliveryError("Telegram alert transport failed") from None

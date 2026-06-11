@@ -3,8 +3,10 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import pytest
+
 from arb_scanner.app.markets.matching import MatchStage, similarity
-from arb_scanner.app.markets.parsers import normalize_title, parse_features
+from arb_scanner.app.markets.parsers import MarketType, normalize_title, parse_features
 
 D = Decimal
 
@@ -44,6 +46,68 @@ class TestParseFeatures:
     def test_extracts_entity_tokens(self) -> None:
         features = parse_features("Will Bitcoin reach $70,000 by Dec 31?")
         assert "bitcoin" in features.tokens
+
+    def test_extracts_explicit_date_and_year(self) -> None:
+        features = parse_features("Will turnout exceed 60% before November 3, 2026?")
+        assert features.event_date is not None
+        assert features.event_date.isoformat() == "2026-11-03"
+        assert features.event_year == 2026
+        assert features.strike == D("60")
+
+    def test_extracts_sports_line(self) -> None:
+        features = parse_features("Will Boston cover a spread of -3.5?", category="sports")
+        assert features.market_type is MarketType.SPORTS_SPREAD
+        assert features.strike == D("-3.5")
+
+    def test_description_can_supply_structured_evidence(self) -> None:
+        features = parse_features(
+            "Will rainfall set a record?",
+            description="Resolves yes if rainfall exceeds 5 inches by December 31, 2026.",
+            category="weather",
+        )
+        assert features.market_type is MarketType.WEATHER_THRESHOLD
+        assert features.event_date is not None
+        assert features.event_date_evidence is not None
+        assert features.event_date_evidence.source == "description"
+
+    @pytest.mark.parametrize(
+        ("title", "category", "expected"),
+        [
+            ("Will Alice win the election?", None, MarketType.ELECTION_WINNER),
+            ("Will Alice be the party nominee?", None, MarketType.PARTY_NOMINEE),
+            (
+                "Will Alice finish 2nd in the gubernatorial primary?",
+                None,
+                MarketType.PRIMARY_PLACEMENT,
+            ),
+            (
+                "Will Alice qualify for the primary runoff?",
+                None,
+                MarketType.PRIMARY_ADVANCEMENT,
+            ),
+            ("Will Alice win the governor race?", None, MarketType.GOVERNOR_WINNER),
+            ("Will Alice win the Senate race?", None, MarketType.SENATE_WINNER),
+            ("Will Alice win the House race?", None, MarketType.HOUSE_WINNER),
+            ("Will Alice win the presidential election?", None, MarketType.PRESIDENTIAL_WINNER),
+            ("Will Republicans control the Senate?", None, MarketType.PARTY_CONTROL),
+            ("Will the margin of victory exceed 5 points?", None, MarketType.MARGIN_SPREAD),
+            ("Will Alice receive exactly 51% vote share?", None, MarketType.EXACT_VOTE_SHARE),
+            ("Will voter turnout exceed 60%?", None, MarketType.TURNOUT),
+            ("Will the total vote count exceed 2,000,000?", None, MarketType.TURNOUT),
+            ("Will Alice be confirmed to the office?", None, MarketType.OFFICE_HOLDER),
+            ("Will Boston beat New York?", "sports", MarketType.SPORTS_MONEYLINE),
+            ("Will Rhode Island FC win the USL Championship?", None, MarketType.SPORTS_MONEYLINE),
+            ("Will Boston cover the spread?", "sports", MarketType.SPORTS_SPREAD),
+            ("Will total points be over 48.5?", "sports", MarketType.SPORTS_TOTAL),
+            ("Will Bitcoin exceed $70,000?", None, MarketType.CRYPTO_PRICE_THRESHOLD),
+            ("Will the Nasdaq exceed 20,000?", None, MarketType.STOCK_INDEX_PRICE_THRESHOLD),
+            ("Will temperature exceed 90 degrees?", None, MarketType.WEATHER_THRESHOLD),
+        ],
+    )
+    def test_market_type_taxonomy(
+        self, title: str, category: str | None, expected: MarketType
+    ) -> None:
+        assert parse_features(title, category=category).market_type is expected
 
 
 class TestSimilarityCascade:

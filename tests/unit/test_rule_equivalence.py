@@ -24,6 +24,7 @@ def kalshi_facts(**overrides: object) -> KalshiRuleFacts:
         "can_close_early": False,
         "is_sports": False,
         "void_policy": "none",
+        "resolution_text": "Settles from the Coindesk BTC price index at 16:00 UTC.",
     }
     defaults.update(overrides)
     return KalshiRuleFacts(**defaults)  # type: ignore[arg-type]
@@ -37,6 +38,7 @@ def poly_facts(**overrides: object) -> PolymarketRuleFacts:
         "is_sports": False,
         "game_start_time": None,
         "void_policy": "none",
+        "resolution_text": "Settles from the Coindesk BTC price index at 16:00 UTC.",
     }
     defaults.update(overrides)
     return PolymarketRuleFacts(**defaults)  # type: ignore[arg-type]
@@ -85,6 +87,23 @@ class TestValidateRules:
             poly_facts(is_sports=True, game_start_time=T0 - timedelta(hours=3)),
         )
         assert any("early start" in w for w in result.warnings)
+
+    def test_unknown_void_policy_requires_manual_review(self) -> None:
+        result = validate_rules(kalshi_facts(void_policy=None), poly_facts(void_policy=None))
+        assert any("void policy unknown" in warning for warning in result.warnings)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_missing_resolution_text_requires_manual_review(self) -> None:
+        result = validate_rules(kalshi_facts(resolution_text=""), poly_facts(resolution_text=""))
+        assert any("resolution text missing" in warning for warning in result.warnings)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_unknown_determination_time_requires_manual_review(self) -> None:
+        result = validate_rules(
+            kalshi_facts(determination_time=None), poly_facts(determination_time=None)
+        )
+        assert any("determination time unverified" in warning for warning in result.warnings)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
 
 
 class TestDecideStatus:

@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
+from typing import Any
 
 from arb_scanner.app.types import Money
 
@@ -49,6 +50,32 @@ class FeeSchedule:
     exponent: Decimal
     source: FeeRateSource
     taker_only: bool = True
+
+
+def fee_schedule_from_metadata(payload: dict[str, Any]) -> FeeSchedule | None:
+    """Parse Gamma/WS `feeSchedule` or compact CLOB market-info `fd` metadata."""
+    raw = payload.get("feeSchedule") or payload.get("fee_schedule") or payload.get("fd")
+    if raw is None:
+        if payload.get("feesEnabled") is False:
+            return FeeSchedule(
+                rate=Decimal(0),
+                exponent=Decimal(1),
+                source=FeeRateSource.MARKET_METADATA,
+            )
+        return None
+    if not isinstance(raw, dict):
+        return None
+    rate = raw.get("rate", raw.get("r"))
+    exponent = raw.get("exponent", raw.get("e"))
+    taker_only = raw.get("takerOnly", raw.get("taker_only", raw.get("to", True)))
+    if rate is None or exponent is None:
+        return None
+    return FeeSchedule(
+        rate=Decimal(str(rate)),
+        exponent=Decimal(str(exponent)),
+        source=FeeRateSource.MARKET_METADATA,
+        taker_only=bool(taker_only),
+    )
 
 
 def polymarket_taker_fee_raw(

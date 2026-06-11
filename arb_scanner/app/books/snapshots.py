@@ -23,6 +23,7 @@ def kalshi_snapshot_payload(book: KalshiBook) -> dict[str, Any]:
         "market_ticker": book.market_ticker,
         "yes_bids": _ladder_payload(book.yes_bids),
         "no_bids": _ladder_payload(book.no_bids),
+        "timestamp_ms": book.timestamp_ms,
     }
 
 

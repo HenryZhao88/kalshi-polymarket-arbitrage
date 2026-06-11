@@ -62,6 +62,11 @@ Source: https://docs.kalshi.com/getting_started/fee_rounding (fetched directly, 
   (YES ask at X ≡ NO bid at 1−X). Multivariate (`MVE*`) series returned empty REST books
   even with high volume — combo markets don't quote in the standard book. **Excluded from
   scanning in Phase 3.**
+- `GET /markets` documents cursor pagination and `mve_filter=exclude`:
+  https://docs.kalshi.com/api-reference/market/get-markets. The client now follows every
+  cursor, sends the exclusion filter, and rejects repeated cursors or excessive page
+  counts. Integration tests cover both pagination and loop protection. This addresses a
+  prior live run where the first 100 unfiltered results were all MVE markets.
 
 ### 1.5 Rate limits
 
@@ -101,8 +106,8 @@ https://help.kalshi.com/en/articles/13823791-transfers-faq (search-indexed copie
 - Debit card deposits: **up to 2% processing fee** (configurable in our model).
 - Temporary withdrawal holds on deposited funds vary by method → modeled as
   capital-lock time, not dollar cost (per SPEC).
-- Crypto processor fees: not found on the indexed pages → **left configurable, default 0,
-  flagged**.
+- Crypto processor fees: not found on the indexed pages. The scanner leaves processor
+  cost unknown, and therefore rejects by default, until an operator configures it.
 
 ---
 
@@ -133,6 +138,10 @@ Source: https://docs.polymarket.com/trading/fees (fetched directly, 200).
 - SDK: `get_clob_market_info(condition_id)` returns fee fields; WS `new_market` event
   carries `fee_schedule: {exponent, rate, taker_only, rebate_rate}` —
   **this is the runtime per-market source** (per SPEC directive).
+- A live Gamma market observed during the independent audit exposed a `0.05` fee schedule.
+  The scanner now parses Gamma `feeSchedule`, snake-case WS metadata, and compact CLOB
+  `fd` metadata, then threads the resulting rate/exponent into candidate economics. A
+  fixture test proves a `0.05` schedule is charged rather than treated as zero.
 - `GET https://clob.polymarket.com/fee-rate?token_id=…` (doc:
   https://docs.polymarket.com/api-reference/market-data/get-fee-rate) returns
   `{"base_fee": <bps>}`. ⚠️ **Live-observed `base_fee = 1000` uniformly across Crypto,
@@ -161,7 +170,9 @@ Source: https://docs.polymarket.com/api-reference/bridge/get-a-quote (fetched di
   fillCostUsd, maxSlippage, swapImpact(+Usd), totalImpact(+Usd), minReceived` plus
   `estCheckoutTimeMs, estInputUsd, estOutputUsd, estToTokenBaseUnit, quoteId`.
 - Bridge API rate limit: **50 req / 10 s** (most restrictive of all).
-- Costs are **always taken from a live quote, never hardcoded** (per SPEC).
+- `BridgeQuote` parses this schema, but the scan loop does not yet request live bridge
+  quotes. Bridge cost is an explicit operator setting and is unknown by default; unknown
+  required costs reject candidates unless `ARB_ALLOW_UNKNOWN_COSTS=true` is set.
 
 ### 2.5 Geoblocking / jurisdiction
 
@@ -243,3 +254,41 @@ Source: https://docs.polymarket.com/market-data/websocket/market-channel (fetche
   e.g. the deployment VPS). CI/local default test runs use committed fixtures only.
 - Fixtures: `tests/fixtures/live_2026-06-11/` (large responses truncated; marked with
   `_truncated_from`).
+
+## 5. Scanner implementation verification
+
+The following labels describe the current code, not the target specification.
+
+| Area | Status | Evidence / limitation |
+|---|---|---|
+| Kalshi discovery | Implemented, fixture-tested | Cursor pagination, `mve_filter=exclude`, repeated-cursor failure. |
+| Polymarket discovery | Implemented, fixture-tested | Bounded Gamma `/markets/keyset` pagination, deduplication, repeated-page/cursor protection, and normalized metadata. Default limit is 500 markets over at most 5 pages. |
+| Order books | Implemented, public-read verified | Kalshi REST capture time is used because the REST payload has no server snapshot time. |
+| Rule equivalence | Conservative partial | Typed election/control/nominee, margin, sports, financial, and weather contracts plus event date, threshold, source, time, void/fair-value/DNP, cancellation, and dispute terms. Conflicts reject; missing critical facts become `manual_review`. Full natural-language rule interpretation is not implemented. |
+| Polymarket fees | Implemented, fixture-tested | Per-market metadata wins. Category fallback/unknown rejects unless explicitly allowed. |
+| Kalshi fees | Partial | General taker schedule is used. Per-series override code is not wired into scanning. |
+| Non-trading costs | Configured/unknown | Bridge, withdrawal, gas, processor, and conversion are explicit fields but not live-fetched. Unknowns reject by default. |
+| Slippage | Simulated | Configurable model; default fixed 0.5 cents/share. Not a realized fill measurement. |
+| Risk facts | Implemented with caveats | Hold time comes from venue end timestamps; quote age from snapshots; exposure is scan-session only. |
+| Persistence | Implemented, bounded | Raw low-similarity persistence is off by default. Manual-review and accepted rows remain; rejected rows are capped per scan. Retention removes old pairs/books/evaluations. |
+| Replay | Partial | Re-evaluates complete paired snapshots. No realized P&L or later two-leg fill sequence is claimed. |
+| Alerts | Implemented/mocked in tests | Dry-run external sinks are disabled by default; transport tests use local HTTP fixtures. |
+| Execution | Disabled / unimplemented | No order placement code. Router raises after eligibility checks and is not called by the CLI. |
+
+Gamma pagination follows the official keyset contract documented at
+https://docs.polymarket.com/api-reference/markets/list-markets-keyset-pagination.
+The endpoint documents `limit` up to 100, `after_cursor`, and `next_cursor`; scanner
+limits remain operator-configurable and finite.
+
+The 2026-06-11 public dry-run fetched 500 unique Gamma markets over 5 pages instead
+of the prior 100-market single page. After typed market, date, threshold, party, state,
+and ticker diagnostics, it produced 18,615 raw-title candidates, 2,482 structured
+candidates, 14 manual-review candidates, 18,601 rejections, and 0 accepted candidates.
+The prior parser left 230 candidates in manual review; the stricter diagnostics now
+reject additional market-type, date, threshold, and outcome conflicts. Manual-review
+entries remain diagnostic and explicitly labeled NOT TRADE SAFE. See
+`docs/examples/dry-run-live.log`.
+
+Validation after the structured parsing changes: `312 passed, 1 deselected`,
+`ruff check .` clean, `mypy arb_scanner` clean, `mypy .` clean, and `git diff --check`
+clean. The deselected test is the opt-in live public-read smoke test.

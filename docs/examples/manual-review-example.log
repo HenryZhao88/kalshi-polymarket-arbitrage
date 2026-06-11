@@ -1,0 +1,20 @@
+# Deterministic output shape only. This is not a live market or profit claim.
+# Example sort: --manual-review-sort missing_fields
+manual review (top 1; NOT TRADE SAFE):
+[1] NOT TRADE SAFE | similarity=0.9100
+  Kalshi: EXAMPLE-TICKER | Example threshold market?
+  Polymarket: 0xexample | Example threshold market?
+  matched tokens: example, market, threshold
+  market types: Kalshi=weather_threshold | Polymarket=weather_threshold
+  event dates: Kalshi=2026-07-01 | Polymarket=2026-07-01
+  event years: Kalshi=2026 | Polymarket=2026
+  thresholds/lines: Kalshi=90 | Polymarket=90
+  evidence sources: types={'value': 'weather_threshold', 'confidence': 'high', 'source': 'title'} | {'value': 'weather_threshold', 'confidence': 'high', 'source': 'question'}; dates={'value': '2026-07-01', 'confidence': 'high', 'source': 'title'} | {'value': '2026-07-01', 'confidence': 'high', 'source': 'question'}; thresholds={'value': 90.0, 'confidence': 'high', 'source': 'title'} | {'value': 90.0, 'confidence': 'high', 'source': 'question'}
+  mismatched fields: none
+  missing rule fields: resolution_source, void_policy
+  reasons: resolution source unverified; void policy unknown; not enough verified evidence to accept
+  times: Kalshi close=2026-07-01T00:00:00+00:00 determination=2026-07-01T00:00:00+00:00 | Polymarket end=2026-07-01T00:00:00+00:00 resolution=None
+  rule evidence: Kalshi source=unknown void=unknown policies=[] | Polymarket source=unknown void=unknown policies=[] dispute=[]
+  rule excerpts: Kalshi=Temperature observation rules... | Polymarket=Temperature observation rules...
+  fee confidence: market_metadata
+  hypothetical edge: NOT COMPUTED - NOT TRADE SAFE

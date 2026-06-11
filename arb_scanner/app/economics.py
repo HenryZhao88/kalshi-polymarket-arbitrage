@@ -8,7 +8,7 @@ Polymarket NO token; the pair pays $1 at resolution whichever way it resolves
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 
@@ -35,9 +35,45 @@ class Direction(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class CostAssumptions:
+    """Configured/live non-trading costs. `None` means unknown, never implicit zero."""
+
+    bridge_cost: Money | None = None
+    withdrawal_cost: Money | None = None
+    gas_cost: Money | None = None
+    processor_cost: Money | None = None
+    conversion_cost: Money | None = None
+    unknown_cost_buffer: Money = field(default_factory=Money.zero)
+
+    def missing_components(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name, value in (
+                ("bridge_cost", self.bridge_cost),
+                ("withdrawal_cost", self.withdrawal_cost),
+                ("gas_cost", self.gas_cost),
+                ("processor_cost", self.processor_cost),
+                ("conversion_cost", self.conversion_cost),
+            )
+            if value is None
+        )
+
+    def fee_breakdown(self) -> FeeBreakdown:
+        return FeeBreakdown(
+            bridge_cost=self.bridge_cost or Money.zero(),
+            withdrawal_cost=self.withdrawal_cost or Money.zero(),
+            gas_cost=self.gas_cost or Money.zero(),
+            processor_cost=self.processor_cost or Money.zero(),
+            conversion_cost=self.conversion_cost or Money.zero(),
+            unknown_cost_buffer=self.unknown_cost_buffer,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class OpportunityEvaluation:
     direction: Direction
-    size: int
+    requested_size: int
+    executable_size: int
     kalshi_leg: DepthResult
     poly_leg: DepthResult
     gross: Money
@@ -49,6 +85,15 @@ class OpportunityEvaluation:
     break_even_slippage_per_share: Decimal
     break_even_extra_fees: Money
     partial_fill_risk: bool
+
+    @property
+    def size(self) -> int:
+        """Backward-compatible alias for the economically evaluated size."""
+        return self.executable_size
+
+    @property
+    def fill_fraction(self) -> Decimal:
+        return Decimal(self.executable_size) / Decimal(self.requested_size)
 
 
 def evaluate_direction(
@@ -108,6 +153,7 @@ def evaluate_direction(
         conversion_cost=base.conversion_cost,
         gas_cost=base.gas_cost,
         expected_slippage=expected_slippage,
+        unknown_cost_buffer=base.unknown_cost_buffer,
         latency_miss=base.latency_miss,
         optional_rebates=base.optional_rebates,
     )
@@ -119,7 +165,8 @@ def evaluate_direction(
 
     return OpportunityEvaluation(
         direction=direction,
-        size=eval_size,
+        requested_size=size,
+        executable_size=eval_size,
         kalshi_leg=kalshi_leg,
         poly_leg=poly_leg,
         gross=gross,

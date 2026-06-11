@@ -1,2 +1,18 @@
-pairs considered: 0, accepted: 0
+# Live public-data dry-run on 2026-06-11 after Gamma keyset pagination and
+# conservative candidate diagnostics.
+# Command used from the repository root:
+# ARB_DRY_RUN_SEND_ALERTS=false uv run arb-scanner dry-run --show-manual-review 20 --manual-review-sort missing_fields
+#
+# Persistence was enabled by default. No external alert sink was enabled, no pair
+# was accepted, no order-book economics ran, and no order placement exists.
+Gamma discovery pages=5 fetched=500 unique=500
+markets: Kalshi discovered=64662 scannable=64660, Polymarket discovered=500 scannable=500 pages=5 fetched=500
+candidate funnel: raw_title=18615 structured=2482 manual_review=14 accepted=0 rejected=18601
+rejections by reason: determination_time_conflict=15627, market_type_conflict=2297, similarity_below_review_threshold=595, threshold_conflict=44, event_date_conflict=20, outcome_entity_conflict=13, other_rule_conflict=5
+
+# Known Senate-vs-control, nominee-vs-winner, margin-vs-outright, state, party,
+# date, and threshold conflicts were rejected. The highest remaining manual-review
+# examples were plausible governor-party pairs with missing time, source, and
+# void-policy evidence. They remained NOT TRADE SAFE.
+manual review: 14 candidates; top 14 printed as NOT TRADE SAFE
 no accepted pairs produced evaluable opportunities this pass

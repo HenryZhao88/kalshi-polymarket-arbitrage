@@ -56,6 +56,35 @@ class AlertPayload:
         ]
         return "\n".join(lines)
 
+    def to_dict(self) -> dict[str, str | int | float | None]:
+        return {
+            "kalshi_ticker": self.kalshi_ticker,
+            "poly_condition_id": self.poly_condition_id,
+            "direction": self.direction,
+            "confidence": self.confidence,
+            "size": self.size,
+            "depth_summary": self.depth_summary,
+            "net_edge_dollars": str(self.net_edge.to_dollars()),
+            "simple_return": str(self.simple_return),
+            "annualized_return": str(self.annualized_return),
+            "break_even_slippage_per_share": str(self.break_even_slippage_per_share),
+            "break_even_extra_fees_dollars": str(self.break_even_extra_fees.to_dollars()),
+            "kalshi_fee_dollars": str(self.fees.kalshi_fee.to_dollars()),
+            "polymarket_fee_dollars": str(self.fees.polymarket_fee.to_dollars()),
+            "bridge_cost_dollars": str(self.fees.bridge_cost.to_dollars()),
+            "withdrawal_cost_dollars": str(self.fees.withdrawal_cost.to_dollars()),
+            "gas_cost_dollars": str(self.fees.gas_cost.to_dollars()),
+            "processor_cost_dollars": str(self.fees.processor_cost.to_dollars()),
+            "conversion_cost_dollars": str(self.fees.conversion_cost.to_dollars()),
+            "slippage_cost_dollars": str(self.fees.slippage_cost.to_dollars()),
+            "unknown_cost_buffer_dollars": str(self.fees.unknown_cost_buffer.to_dollars()),
+            "snapshot_id": self.snapshot_id,
+        }
+
+
+class AlertDeliveryError(Exception):
+    """Sanitized alert failure that never includes credential-bearing URLs."""
+
 
 class AlertSink(Protocol):
     async def send(self, payload: AlertPayload) -> None: ...

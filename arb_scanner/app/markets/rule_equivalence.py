@@ -33,30 +33,36 @@ class MatchStatus(StrEnum):
 class KalshiRuleFacts:
     determination_time: datetime | None
     resolution_source: str
+    resolution_text: str
     can_close_early: bool
     is_sports: bool
-    void_policy: str  # venue-specific token, e.g. "none" / "trades_stand"
+    void_policy: str | None
+    sports_policy: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class PolymarketRuleFacts:
     determination_time: datetime | None
     resolution_source: str
+    resolution_text: str
     uma_resolution: bool
     is_sports: bool
     game_start_time: datetime | None
-    void_policy: str
+    void_policy: str | None
+    sports_policy: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class RuleEquivalenceResult:
     hard_failures: tuple[str, ...]
     warnings: tuple[str, ...]
+    missing_fields: tuple[str, ...]
 
 
 def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEquivalenceResult:
     failures: list[str] = []
     warnings: list[str] = []
+    missing: list[str] = []
 
     # Determination time: end date vs determination time must agree exactly.
     if kalshi.determination_time and poly.determination_time:
@@ -67,6 +73,7 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
             )
     else:
         warnings.append("determination time unverified on at least one venue")
+        missing.append("determination_time")
 
     # Resolution source.
     k_src, p_src = kalshi.resolution_source.strip().lower(), poly.resolution_source.strip().lower()
@@ -75,9 +82,17 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
             failures.append(f"resolution source differs: {k_src!r} vs {p_src!r}")
     else:
         warnings.append("resolution source unverified on at least one venue")
+        missing.append("resolution_source")
+
+    if not kalshi.resolution_text.strip() or not poly.resolution_text.strip():
+        warnings.append("market resolution text missing on at least one venue")
+        missing.append("resolution_text")
 
     # Void / DNP / postponement handling.
-    if kalshi.void_policy != poly.void_policy:
+    if kalshi.void_policy is None or poly.void_policy is None:
+        warnings.append("void policy unknown on at least one venue")
+        missing.append("void_policy")
+    elif kalshi.void_policy != poly.void_policy:
         failures.append(f"void policy differs: kalshi={kalshi.void_policy} poly={poly.void_policy}")
 
     # UMA challenge window applies to Polymarket-resolved markets.
@@ -86,13 +101,26 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
 
     # Sports early-start divergence.
     if kalshi.is_sports or poly.is_sports:
+        if kalshi.sports_policy and poly.sports_policy:
+            if kalshi.sports_policy != poly.sports_policy:
+                failures.append(
+                    "sports postponement/cancellation policy differs: "
+                    f"kalshi={kalshi.sports_policy} poly={poly.sports_policy}"
+                )
+        elif kalshi.sports_policy or poly.sports_policy:
+            warnings.append("sports postponement/cancellation policy unverified")
+            missing.append("sports_postponement_policy")
         if poly.game_start_time is not None or kalshi.can_close_early:
             warnings.append(
                 "sports early start risk: Polymarket cancels limit orders at "
                 "scheduled start (may miss early starts); Kalshi may trade past close"
             )
 
-    return RuleEquivalenceResult(hard_failures=tuple(failures), warnings=tuple(warnings))
+    return RuleEquivalenceResult(
+        hard_failures=tuple(failures),
+        warnings=tuple(warnings),
+        missing_fields=tuple(dict.fromkeys(missing)),
+    )
 
 
 def decide_status(
