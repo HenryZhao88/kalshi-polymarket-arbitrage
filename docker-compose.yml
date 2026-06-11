@@ -1,0 +1,12 @@
+services:
+  scanner:
+    build: .
+    env_file: .env
+    environment:
+      ARB_DATABASE_URL: sqlite+aiosqlite:////data/arb_scanner.db
+    volumes:
+      - scanner-data:/data
+    restart: unless-stopped
+
+volumes:
+  scanner-data:
