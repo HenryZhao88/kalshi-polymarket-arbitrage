@@ -468,9 +468,14 @@ checks:
 
 - `continent_scope_conflict`: needs World Cup context on both sides, a
   complement ("other than / not in / outside X or Y") on exactly one side,
-  and exactly one named continent inside the exclusion set on the other.
-  Same-continent winner pairs (e.g. `KXWCCONTINENT-26-SA` vs "South America
-  wins") never fire and stay manual_review.
+  and exactly one named continent inside the exclusion set in the other
+  side's **title**. Only the title identifies the specific side's continent:
+  the live Gamma description names other continents as examples ("if France
+  wins, the market will resolve to Europe"). A complement phrase inside a
+  resolves-to-No sentence is the inverse statement of a single-continent
+  market and is never read as an exclusion. Same-continent winner pairs
+  (e.g. `KXWCCONTINENT-26-SA` vs "South America wins") never fire and stay
+  manual_review.
 - `sports_stage_vs_winner_conflict`: knockout-stage + team-count language on
   exactly one side, tournament-winner language (and no stage language) on the
   other.
