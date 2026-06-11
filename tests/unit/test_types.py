@@ -31,9 +31,7 @@ class TestMoneyConstruction:
 
 class TestMoneyArithmetic:
     def test_add(self) -> None:
-        assert Money.from_dollars("1.10") + Money.from_dollars("0.15") == Money.from_dollars(
-            "1.25"
-        )
+        assert Money.from_dollars("1.10") + Money.from_dollars("0.15") == Money.from_dollars("1.25")
 
     def test_sub_can_go_negative(self) -> None:
         assert (Money.from_dollars("1") - Money.from_dollars("2.50")).to_dollars() == Decimal(
@@ -71,6 +69,19 @@ class TestMoneyRounding:
         assert Money.from_dollars("0.0002").ceil_to(Decimal("0.0001")) == Money.from_dollars(
             "0.0002"
         )
+
+    def test_floor_to_cent(self) -> None:
+        assert Money.from_dollars("0.0635").floor_to(Decimal("0.01")) == Money.from_dollars("0.06")
+
+    def test_floor_to_negative_goes_more_negative(self) -> None:
+        # balance change -$0.0635 floors to -$0.07 (toward -infinity), per Kalshi
+        # fee-rounding mechanics
+        assert Money.from_dollars("-0.0635").floor_to(Decimal("0.01")) == Money.from_dollars(
+            "-0.07"
+        )
+
+    def test_floor_to_exact_unchanged(self) -> None:
+        assert Money.from_dollars("-0.07").floor_to(Decimal("0.01")) == Money.from_dollars("-0.07")
 
 
 class TestBookLevel:

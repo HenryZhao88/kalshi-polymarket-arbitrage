@@ -65,6 +65,13 @@ class Money:
     def ceil_to_cent(self) -> Money:
         return self.ceil_to(Decimal("0.01"))
 
+    def floor_to(self, quantum_dollars: Decimal) -> Money:
+        """Round down (toward -infinity) to the nearest multiple of `quantum_dollars`."""
+        quantum = Money.from_dollars(quantum_dollars).micros
+        if quantum <= 0:
+            raise ValueError("quantum must be positive")
+        return Money(self.micros // quantum * quantum)
+
 
 class Side(StrEnum):
     YES = "yes"
