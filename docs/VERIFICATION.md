@@ -755,3 +755,56 @@ Encoded in `rule_equivalence.py`:
 
 Rejection/diagnostic-only; acceptance logic unchanged. No arbitrage or
 profitability claim is implied for any same-direction pair.
+
+## 17. MLB strikeout-leader pair: tie-policy divergence (2026-06-12)
+
+Manual verification of KXLEADERMLBKS-26-TSKUBAL29 vs Polymarket condition
+`0x9687fa18…` (slug
+`will-tarik-skubal-strike-out-the-most-batters-during-the-2026-mlb-regular-season`).
+Sources fetched 2026-06-12:
+
+- https://api.elections.kalshi.com/trade-api/v2/markets/KXLEADERMLBKS-26-TSKUBAL29
+- https://gamma-api.polymarket.com/markets?condition_ids=0x9687fa18…
+
+**Verdict: B — probably the same event, NOT TRADE SAFE.** Same player, same
+statistic (strikeouts), same scope (2026 MLB regular season; Kalshi "Pro
+Baseball" resolves on "official league statistics" with preseason/postseason/
+all-star excluded; multi-team stats combined). Material divergences:
+
+- **Tie policy** (documented on both venues, structurally different): Kalshi —
+  *"In case of exact ties where the league does not declare a single winner,
+  tied participants receive a proportional payout"*; Polymarket — a tiebreak
+  cascade (official MLB leader → fewer innings pitched → lower ERA → fewer
+  walks → alphabetical) that always names a **single winner**. An exact tie
+  pays each venue differently.
+- Cancellation: Polymarket resolves to "Other" if the season is cancelled or
+  no leader is declared by Oct 15, 2026 (the existing void-policy family);
+  Kalshi closes early "if the season ends earlier than expected" with
+  fair-value-family handling in series terms.
+- Statistical corrections: Kalshi counts them only before expiration;
+  Polymarket finalizes through UMA.
+
+Encoded (diagnostic-only): `stat_tie_policy` classifies rules text as
+`ties_split` ("proportional payout") or `sole_winner_tiebreak` (cascade
+markers); when both sides classify to the same `stat_leader:<stat>` kind and
+their tie policies differ or are unknown, validate_rules adds a
+`stat_leader_rule_mismatch` warning and a `stat_leader_tie_policy` missing
+field — manual_review, never accepted. Tie bases are persisted in excerpts
+and exported (`kalshi_stat_tie_policy`, `polymarket_stat_tie_policy`,
+appended headers).
+
+Same pass, justified by the same 10k rows:
+
+- **Accented-name entity extraction fixed**: the entity filter was
+  ASCII-only, so "Cristopher Sánchez"/"Jesús Luzardo"/"Carlos Rodón" rows
+  extracted no entity on either venue. `normalize_entity_name` now folds
+  diacritics (NFKD), making "Sánchez" ≡ "Sanchez" across venues.
+- **Generic class subjects filtered**: "Any pitcher" (KXMLBSTAT perfect-game
+  row) extracted as an entity; quantifier/determiner first tokens (any, the,
+  all, no, …) now extract nothing.
+- **Stat-leader question extraction**: "Will <Name> strike out the most
+  batters…" and similar verb shapes now extract the player from the question
+  when `groupItemTitle` is absent.
+- **All-Star selection** classifies as `award_winner` in `player_prop_kind`,
+  so All-Star-vs-strikeout-leader pairs reject through the existing
+  `player_prop_scope_conflict`.

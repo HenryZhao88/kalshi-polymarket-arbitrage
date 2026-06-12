@@ -28,6 +28,7 @@ from arb_scanner.app.markets.rule_equivalence import (
     source_finalization_basis,
     source_finalization_terms,
     sports_stage_vs_winner_conflict,
+    stat_tie_policy,
     stock_close_vs_intramonth_high_conflict,
     validate_rules,
     void_policy_conflict,
@@ -1224,6 +1225,104 @@ class TestCentralBankDirectionConflict:
             poly_facts(resolution_text=POLY_CB_DECREASE),
         )
         assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+
+
+# Verbatim rules from the verified Skubal pair, fetched 2026-06-12
+# (docs/VERIFICATION.md §17).
+KALSHI_K_LEADER_RULES = (
+    "Will Tarik Skubal lead Pro Baseball in strikeouts for the 2026 regular season?\n"
+    "If Tarik Skubal leads Pro Baseball in strikeouts for the 2026 regular "
+    "season, then the market resolves to Yes. The participant must have the "
+    "highest total of the specified statistic across the entire season type as "
+    "documented by the official league statistics. In case of exact ties where "
+    "the league does not declare a single winner, tied participants receive a "
+    "proportional payout."
+)
+POLY_K_LEADER_RULES = (
+    "Will Tarik Skubal strike out the most batters during the 2026 MLB regular season?\n"
+    "This market will resolve according to the pitcher who records the most "
+    "strikeouts among pitchers during the 2026 Major League Baseball regular "
+    "season. In the event of a tie, this market will resolve according to the "
+    "official leader as determined by the rules of the MLB. If multiple leaders "
+    "are announced then this market will resolve to the pitcher that records "
+    "fewer innings pitched. If a tie still persists, this market will resolve "
+    "to the pitcher whose listed last name comes first alphabetically."
+)
+
+
+class TestStatTiePolicy:
+    def test_kalshi_proportional_payout_is_ties_split(self) -> None:
+        assert stat_tie_policy(KALSHI_K_LEADER_RULES) == "ties_split"
+
+    def test_polymarket_cascade_is_sole_winner(self) -> None:
+        assert stat_tie_policy(POLY_K_LEADER_RULES) == "sole_winner_tiebreak"
+
+    def test_absent_or_ambiguous_text_has_no_policy(self) -> None:
+        assert stat_tie_policy("Resolves to the strikeout leader.") is None
+        both = KALSHI_K_LEADER_RULES + " " + POLY_K_LEADER_RULES
+        assert stat_tie_policy(both) is None
+
+
+class TestStatLeaderRuleMismatch:
+    def _result(self, kalshi_text: str, poly_text: str) -> Any:
+        return validate_rules(
+            kalshi_facts(
+                resolution_text=kalshi_text,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=poly_text,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+
+    def test_split_vs_sole_winner_is_diagnostic_manual_review(self) -> None:
+        result = self._result(KALSHI_K_LEADER_RULES, POLY_K_LEADER_RULES)
+        assert not any("stat_leader" in f for f in result.hard_failures)
+        assert any(
+            "stat_leader_rule_mismatch: tie policy kalshi=ties_split "
+            "polymarket=sole_winner_tiebreak" in w
+            for w in result.warnings
+        )
+        assert "stat_leader_tie_policy" in result.missing_fields
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_unknown_tie_policy_on_same_stat_pair_is_flagged(self) -> None:
+        bare = "Will Tarik Skubal lead Pro Baseball in strikeouts for the 2026 season?"
+        result = self._result(bare, POLY_K_LEADER_RULES)
+        assert any("stat_leader_rule_mismatch" in w for w in result.warnings)
+
+    def test_matching_tie_policies_do_not_warn(self) -> None:
+        result = self._result(POLY_K_LEADER_RULES, POLY_K_LEADER_RULES)
+        assert not any("stat_leader_rule_mismatch" in w for w in result.warnings)
+
+    def test_non_stat_leader_pairs_never_warn(self) -> None:
+        result = self._result("Will Boston beat New York?", "Will Boston beat New York?")
+        assert not any("stat_leader_rule_mismatch" in w for w in result.warnings)
+
+    def test_warning_cannot_accept(self) -> None:
+        result = self._result(KALSHI_K_LEADER_RULES, POLY_K_LEADER_RULES)
+        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+
+
+class TestAllStarSelectionIsAward:
+    def test_all_star_selection_classifies_as_award(self) -> None:
+        assert (
+            player_prop_kind("Will Cristopher Sánchez be selected to the 2026 NL All-Star Team?")
+            == "award_winner"
+        )
+
+    def test_all_star_vs_strikeout_leader_is_rejected(self) -> None:
+        message = player_prop_scope_conflict(
+            "Will Yoshinobu Yamamoto be selected to the 2026 NL All-Star Team?",
+            POLY_K_LEADER,
+        )
+        assert message is not None
+        assert "player_prop_scope_conflict" in message
 
 
 class TestDecideStatus:

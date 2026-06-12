@@ -108,6 +108,8 @@ EXPORT_FIELDS: tuple[str, ...] = (
     "evidence_confidence_summary",
     "kalshi_outcome_entity",
     "polymarket_outcome_entity",
+    "kalshi_stat_tie_policy",
+    "polymarket_stat_tie_policy",
 )
 
 #: Human follow-up per primary blocker. Keys are matched by prefix against
@@ -120,6 +122,14 @@ _NEXT_ACTIONS: tuple[tuple[str, str], ...] = (
     (
         "outcome_entity",
         "confirm both venues resolve on the same candidate/participant",
+    ),
+    (
+        "stat_leader",
+        "verify official stats source, tie handling, and regular-season scope",
+    ),
+    (
+        "central_bank",
+        "compare exact rate-decision magnitude scopes on both venues",
     ),
     ("void_policy", "verify cancellation/void handling in both venues' full terms"),
     ("candidate_set", "compare exact candidate lists and replacement rules"),
@@ -369,6 +379,8 @@ def pair_record(row: MatchedPairRow) -> dict[str, Any]:
         "polymarket_source_finalization_basis": poly.get("source_finalization_basis"),
         "kalshi_outcome_entity": details.get("kalshi_outcome_entity"),
         "polymarket_outcome_entity": details.get("poly_outcome_entity"),
+        "kalshi_stat_tie_policy": kalshi.get("stat_tie_policy"),
+        "polymarket_stat_tie_policy": poly.get("stat_tie_policy"),
     }
     record.update(
         blocking_summary(

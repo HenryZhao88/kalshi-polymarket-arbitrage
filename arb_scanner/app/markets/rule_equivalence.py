@@ -383,7 +383,8 @@ def stock_close_vs_intramonth_high_conflict(kalshi_text: str, poly_text: str) ->
 _PLAYER_AWARD_RE = re.compile(
     r"\bmvp\b|\bplayer of the year\b|\bprotector of the year\b|"
     r"\brookie of the year\b|\bcy young\b|\bcoach of the year\b|"
-    r"\bon the\b[^.\n]{0,40}\btop \d+ list\b",
+    r"\bon the\b[^.\n]{0,40}\btop \d+ list\b|"
+    r"\bselected to\b[^.\n]{0,40}\ball[- ]star\b",
     re.IGNORECASE,
 )
 _PLAYER_TRANSACTION_RE = re.compile(
@@ -537,6 +538,33 @@ def central_bank_direction_conflict(kalshi_text: str, poly_text: str) -> str | N
         f"{kalshi_decision[1]}, polymarket={poly_decision[0]} "
         f"{poly_decision[1]}; verified 2026-06-11, docs/VERIFICATION.md §16)"
     )
+
+
+# Stat-leader tie-policy bases, verified 2026-06-12 against the
+# KXLEADERMLBKS family (docs/VERIFICATION.md §17). Kalshi: exact ties pay a
+# PROPORTIONAL payout ("tied participants receive a proportional payout");
+# Polymarket: a tiebreak cascade (official leader, fewer innings, lower ERA,
+# fewer walks, alphabetical) always names a SINGLE winner. In an exact-tie
+# state the venues pay differently — a diagnostic blocker, never a rejection.
+_TIES_SPLIT_RE = re.compile(
+    r"\bproportional payout\b|\bsplit proportional\w*\b", re.IGNORECASE
+)
+_SOLE_WINNER_TIEBREAK_RE = re.compile(
+    r"\bif (?:a )?tie still persists\b|\bcomes first alphabetically\b|"
+    r"\btie[- ]?break\w*\b",
+    re.IGNORECASE,
+)
+
+
+def stat_tie_policy(text: str) -> str | None:
+    """Classify stat-leader tie handling; None when absent or ambiguous."""
+    split = bool(_TIES_SPLIT_RE.search(text))
+    sole = bool(_SOLE_WINNER_TIEBREAK_RE.search(text))
+    if split and not sole:
+        return "ties_split"
+    if sole and not split:
+        return "sole_winner_tiebreak"
+    return None
 
 
 # Cancellation/void-policy basis extraction, verified 2026-06-11 against
@@ -844,6 +872,26 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         conflict = detect(kalshi_combined, poly_combined)
         if conflict:
             failures.append(conflict)
+    # Same-stat leader pairs: surface tie-policy state explicitly. Proven
+    # different bases, or any side unknown, is a diagnostic blocker — exact
+    # ties pay proportionally on one venue and a single winner on the other.
+    kalshi_prop = player_prop_kind(kalshi_combined)
+    poly_prop = player_prop_kind(poly_combined)
+    if (
+        kalshi_prop is not None
+        and kalshi_prop == poly_prop
+        and kalshi_prop.startswith("stat_leader:")
+    ):
+        kalshi_tie = stat_tie_policy(kalshi_combined)
+        poly_tie = stat_tie_policy(poly_combined)
+        if kalshi_tie != poly_tie or kalshi_tie is None:
+            warnings.append(
+                f"stat_leader_rule_mismatch: tie policy kalshi={kalshi_tie or 'unknown'} "
+                f"polymarket={poly_tie or 'unknown'} — exact ties may pay "
+                "differently on each venue"
+            )
+            missing.append("stat_leader_tie_policy")
+
     # Same rate-decision direction but different magnitude scopes (Cut 25bps
     # vs any decrease): plausibly overlapping, never proven equivalent —
     # diagnostic only, keeps manual_review.

@@ -846,6 +846,92 @@ class TestEvaluatePairEndToEnd:
             assert any("outcome_entity unverified" in r for r in pair.status_reasons)
             assert "outcome_entity" in pair.missing_rule_fields
 
+    def test_mlb_stat_leader_pair_surfaces_tie_policy_mismatch(self) -> None:
+        # The verified Skubal pair (docs/VERIFICATION.md §17): same player,
+        # stat, and season scope, but ties pay proportionally on Kalshi and a
+        # single tiebroken winner on Polymarket. Stays manual_review with the
+        # explicit diagnostic; never accepted.
+        kalshi = {
+            "ticker": "KXLEADERMLBKS-26-TSKUBAL29",
+            "title": "Will Tarik Skubal lead Pro Baseball in strikeouts for "
+            "the 2026 regular season?",
+            "yes_sub_title": "Tarik Skubal",
+            "expected_expiration_time": "2026-10-15T14:00:00Z",
+            "category": "sports",
+            "rules_primary": (
+                "If Tarik Skubal leads Pro Baseball in strikeouts for the 2026 "
+                "regular season, then the market resolves to Yes. In case of "
+                "exact ties where the league does not declare a single winner, "
+                "tied participants receive a proportional payout."
+            ),
+        }
+        poly = {
+            "conditionId": "0x9687fa18",
+            "question": "Will Tarik Skubal strike out the most batters during "
+            "the 2026 MLB regular season?",
+            "groupItemTitle": "Tarik Skubal",
+            "clobTokenIds": '["111", "222"]',
+            "tags": ["Sports"],
+            "description": (
+                "This market will resolve according to the pitcher who records "
+                "the most strikeouts during the 2026 MLB regular season. In the "
+                "event of a tie, if a tie still persists, this market will "
+                "resolve to the pitcher whose listed last name comes first "
+                "alphabetically."
+            ),
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.MANUAL_REVIEW
+        assert any("stat_leader_rule_mismatch" in r for r in pair.status_reasons)
+        assert "stat_leader_tie_policy" in pair.missing_rule_fields
+        assert pair.matched_fields["kalshi_outcome_entity"] == "tarik skubal"
+        assert pair.matched_fields["poly_outcome_entity"] == "tarik skubal"
+        excerpts = pair.metadata_excerpts
+        assert excerpts["kalshi"]["stat_tie_policy"] == "ties_split"
+        assert excerpts["polymarket"]["stat_tie_policy"] == "sole_winner_tiebreak"
+
+    def test_accented_name_pair_extracts_matching_entities(self) -> None:
+        kalshi = {
+            "ticker": "KXLEADERMLBKS-26-CSANCHEZ61",
+            "title": "Will Cristopher Sánchez lead Pro Baseball in strikeouts "
+            "for the 2026 regular season?",
+            "yes_sub_title": "Cristopher Sánchez",
+            "expected_expiration_time": "2026-10-15T14:00:00Z",
+            "category": "sports",
+        }
+        poly = {
+            "conditionId": "0xsanchez",
+            "question": "Will Cristopher Sánchez strike out the most batters "
+            "during the 2026 MLB regular season?",
+            "clobTokenIds": '["111", "222"]',
+            "tags": ["Sports"],
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.matched_fields["kalshi_outcome_entity"] == "cristopher sanchez"
+        assert pair.matched_fields["poly_outcome_entity"] == "cristopher sanchez"
+        assert not any("outcome entity" in r for r in pair.status_reasons)
+
+    def test_all_star_vs_strikeout_leader_is_rejected_end_to_end(self) -> None:
+        kalshi = {
+            "ticker": "KXMLBALLSTAR-26NL-YYAMAMOTO18",
+            "title": "Will Yoshinobu Yamamoto be selected to the 2026 NL All-Star Team?",
+            "expected_expiration_time": "2026-07-10T00:00:00Z",
+            "category": "sports",
+        }
+        poly = {
+            "conditionId": "0xyamamoto",
+            "question": "Will Yoshinobu Yamamoto strike out the most batters "
+            "during the 2026 MLB regular season?",
+            "clobTokenIds": '["111", "222"]',
+            "tags": ["Sports"],
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.REJECTED
+        assert any("player_prop_scope_conflict" in r for r in pair.status_reasons)
+
     def test_title_match_but_missing_rules_is_manual_review(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")

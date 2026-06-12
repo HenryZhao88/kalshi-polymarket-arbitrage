@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -28,6 +29,7 @@ from arb_scanner.app.markets.rule_equivalence import (
     decide_status,
     source_finalization_basis,
     source_finalization_terms,
+    stat_tie_policy,
     validate_rules,
 )
 from arb_scanner.app.markets.tickers import TickerInference, parse_kalshi_ticker
@@ -275,32 +277,40 @@ def _party_evidence(text: str, source: str) -> Evidence | None:
 # Title-only matching therefore paired every Kalshi contract with every
 # Polymarket candidate at high confidence.
 _ENTITY_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
-_ENTITY_VALUE_RE = re.compile(r"^[A-Za-z][A-Za-z'.\- ]+$")
+_ENTITY_VALUE_RE = re.compile(r"^[^\W\d_][\w'.\- ]+$")
 _POLY_QUESTION_ENTITY_RE = re.compile(
-    r"^will\s+([A-Z][\w'.\-]+(?:\s+[A-Z][\w'.\-]+){1,3})\s+(?:win|be|become)\b",
+    r"^will\s+([A-Z][\w'.\-]+(?:\s+[A-Z][\w'.\-]+){1,3})\s+"
+    r"(?:win|be|become|strike|record|lead|have|hit|throw|score)\b",
     re.IGNORECASE,
 )
 _GENERIC_SUBTITLES = frozenset({"yes", "no", "other", "none of the above"})
+# Quantifier/determiner first tokens mark a class of subjects ("any
+# pitcher", "no candidate"), never a specific outcome entity.
+_GENERIC_FIRST_TOKENS = frozenset({"any", "a", "an", "the", "all", "no", "other", "none"})
 
 
 def normalize_entity_name(raw: str) -> str:
-    """Lowercase, strip punctuation/suffixes, collapse whitespace.
+    """Lowercase, fold diacritics, strip punctuation/suffixes.
 
-    Conservative: only generational suffixes are dropped; initials are kept
-    so "Brianne K. Nadeau" stays distinguishable from another Brianne Nadeau.
+    Diacritics fold so "Cristopher Sánchez" and "Cristopher Sanchez" are the
+    same entity across venues. Conservative otherwise: only generational
+    suffixes are dropped; initials are kept so "Brianne K. Nadeau" stays
+    distinguishable from another Brianne Nadeau.
     """
-    cleaned = re.sub(r"[^\w\s'-]", " ", raw.lower())
+    folded = unicodedata.normalize("NFKD", raw).encode("ascii", "ignore").decode("ascii")
+    cleaned = re.sub(r"[^\w\s'-]", " ", folded.lower())
     tokens = [token for token in cleaned.split() if token not in _ENTITY_NAME_SUFFIXES]
     return " ".join(tokens)
 
 
 def _entity_like(value: str) -> bool:
     text = value.strip()
-    return (
-        bool(_ENTITY_VALUE_RE.match(text))
-        and text.lower() not in _GENERIC_SUBTITLES
-        and len(normalize_entity_name(text).split()) >= 2
-    )
+    if not _ENTITY_VALUE_RE.match(text):
+        return False
+    if text.lower() in _GENERIC_SUBTITLES:
+        return False
+    tokens = normalize_entity_name(text).split()
+    return len(tokens) >= 2 and tokens[0] not in _GENERIC_FIRST_TOKENS
 
 
 def kalshi_outcome_entity(market: dict[str, Any]) -> Evidence | None:
@@ -440,6 +450,7 @@ def _kalshi_excerpt(
         "cancellation_policy_basis": cancellation_policy_basis(rules_text),
         "source_finalization_terms": list(source_finalization_terms(f"{title}\n{rules_text}")),
         "source_finalization_basis": source_finalization_basis(f"{title}\n{rules_text}"),
+        "stat_tie_policy": stat_tie_policy(rules_text),
         "sports_policy_terms": list(sports_terms),
         "dispute_terms": list(_policy_terms(rules_text, _DISPUTE_TERMS)),
         "market_type_evidence": _evidence(features.market_type_evidence),
@@ -485,6 +496,7 @@ def _rule_facts(
             "source_finalization_basis": source_finalization_basis(
                 f"{poly.question}\n{poly.description}"
             ),
+            "stat_tie_policy": stat_tie_policy(poly.description),
             "sports_policy_terms": list(poly_sports_terms),
             "dispute_terms": list(_policy_terms(poly.description, _DISPUTE_TERMS)),
             "market_type_evidence": _evidence(poly_features.market_type_evidence),

@@ -80,6 +80,31 @@ class TestOutcomeEntityExtraction:
         )
         assert poly_outcome_entity(market) is None
 
+    def test_accented_names_normalize_and_extract(self) -> None:
+        # Live KXLEADERMLBKS gap: ASCII-only matching dropped Sánchez/Rodón.
+        assert normalize_entity_name("Cristopher Sánchez") == "cristopher sanchez"
+        evidence = kalshi_outcome_entity({"yes_sub_title": "Jesús Luzardo"})
+        assert evidence is not None
+        assert evidence.value == "jesus luzardo"
+
+    def test_generic_class_subjects_extract_nothing(self) -> None:
+        # "Any pitcher" is a class of subjects, not an outcome entity.
+        assert kalshi_outcome_entity({"yes_sub_title": "Any pitcher"}) is None
+        assert kalshi_outcome_entity({"yes_sub_title": "The Field"}) is None
+
+    def test_poly_stat_leader_question_extracts_player(self) -> None:
+        market = PolymarketMarket.from_gamma(
+            {
+                "conditionId": "0x1",
+                "question": "Will Tarik Skubal strike out the most batters during "
+                "the 2026 MLB regular season?",
+                "clobTokenIds": '["1", "2"]',
+            }
+        )
+        evidence = poly_outcome_entity(market)
+        assert evidence is not None
+        assert (evidence.value, evidence.source) == ("tarik skubal", "question")
+
 
 class TestOutcomeEntitiesConflict:
     def test_identical_names_do_not_conflict(self) -> None:

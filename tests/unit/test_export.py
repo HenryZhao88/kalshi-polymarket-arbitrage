@@ -208,6 +208,35 @@ class TestPairRecord:
         assert record["polymarket_source_finalization_basis"] is None
         assert "finalization=fixed_time_snapshot" in record["rule_evidence_summary"]
 
+    def test_stat_tie_policy_fields(self) -> None:
+        row = make_row()
+        row.matched_fields["metadata_excerpts"]["kalshi"]["stat_tie_policy"] = "ties_split"
+        row.matched_fields["metadata_excerpts"]["polymarket"][
+            "stat_tie_policy"
+        ] = "sole_winner_tiebreak"
+        record = pair_record(row)
+        assert record["kalshi_stat_tie_policy"] == "ties_split"
+        assert record["polymarket_stat_tie_policy"] == "sole_winner_tiebreak"
+        # Old rows export None, not a guess.
+        old = pair_record(make_row(matched_fields={"metadata_excerpts": {}}))
+        assert old["kalshi_stat_tie_policy"] is None
+
+    def test_stat_leader_next_action_mapping(self) -> None:
+        row = make_row(
+            matched_fields={
+                "status_reasons": [
+                    "stat_leader_rule_mismatch: tie policy kalshi=ties_split "
+                    "polymarket=sole_winner_tiebreak — exact ties may pay "
+                    "differently on each venue",
+                ],
+            }
+        )
+        record = pair_record(row)
+        assert record["primary_blocker"] == "stat_leader_rule_mismatch"
+        assert record["next_human_action"] == (
+            "verify official stats source, tie handling, and regular-season scope"
+        )
+
     def test_cancellation_policy_basis_fields(self) -> None:
         row = make_row()
         row.matched_fields["metadata_excerpts"]["polymarket"][
