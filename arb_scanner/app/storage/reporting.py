@@ -64,6 +64,10 @@ def render_pair_row(row: MatchedPairRow) -> list[str]:
             f"Polymarket slug={record['polymarket_slug'] or 'unknown'} "
             f"url={record['polymarket_url'] or 'not derivable'}"
         ),
+        (
+            f"  outcome entities: Kalshi={record['kalshi_outcome_entity'] or 'unknown'} | "
+            f"Polymarket={record['polymarket_outcome_entity'] or 'unknown'}"
+        ),
         f"  matched tokens: {', '.join(str(item) for item in matched_tokens) or 'none'}",
         f"  market types: Kalshi={kalshi_type} | Polymarket={poly_type}",
         (

@@ -678,3 +678,50 @@ when both sides classify to exactly one kind and the kinds differ. Same-stat
 pairs (the potentially equivalent family, e.g. Yamamoto strikeout-leader on
 both venues) and ambiguous/unclassified text always fall through to the
 ordinary conservative checks. Rejection-only; acceptance logic unchanged.
+
+## 15. Outcome-entity matching for categorical markets (2026-06-11)
+
+Verified against the KXDCMAYORD family, the dominant residue of the 10k
+window (104 of 153 manual-review rows). Sources fetched 2026-06-11:
+
+- https://api.elections.kalshi.com/trade-api/v2/events/KXDCMAYORD-26?with_nested_markets=true
+- the persisted Polymarket D.C.-mayor candidate markets (slugs
+  `will-<candidate>-win-the-2026-democratic-dc-mayoral-primary`)
+
+Finding: every Kalshi contract in the event shares one generic title ("Who
+will win the 2026 D.C. Democratic Mayoral Primary?") while the per-contract
+candidate lives in `custom_strike` (`{'Candidate/Party': 'Muriel Bowser'}`),
+`yes_sub_title`, and the rules text. Polymarket's candidate is in each
+market's question. Title-only matching therefore paired all 13 Kalshi
+contracts with all 8 Polymarket candidate markets at ~0.95 confidence — 104
+pairs, only ~13 of them candidate-aligned.
+
+Encoded as an outcome-entity layer in `markets/discovery.py`:
+
+- `kalshi_outcome_entity`: explicit per-contract fields only —
+  `custom_strike` values outrank `yes_sub_title`; the generic title is never
+  used. Non-name-like values (numeric strikes, UUID party ids, bare Yes/No)
+  extract nothing.
+- `poly_outcome_entity`: `groupItemTitle` outranks a conservative
+  "Will <Name> win/be/become" question pattern; single-token subjects (e.g.
+  "Republicans") extract nothing.
+- `normalize_entity_name`: lowercase, strip punctuation, drop generational
+  suffixes, keep initials.
+- `outcome_entities_conflict`: provably-different-only — subset names
+  ("brianne nadeau" vs "brianne k nadeau") are the same person; differing
+  surnames or differing full first names conflict; initial-only or
+  single-token differences are ambiguous and never conflict.
+
+Wiring: both entities proven and conflicting → structured conflict
+("outcome entity A != B") → REJECTED through the existing decide path,
+bucketed as `outcome_entity_conflict`. Exactly one side extracted →
+"outcome_entity unverified on one venue" warning + missing field; pair stays
+manual_review. Neither side → behavior unchanged. Matching entities only
+prevent false rejection — they never accept. Entity tokens
+(custom_strike/yes_sub_title) are also added to the Kalshi searchable text in
+candidate prefiltering, a recall-only change so entity-aligned pairs can
+form; every formed pair still passes unchanged conservative validation.
+Entities are persisted in matched_fields, exported
+(`kalshi_outcome_entity`/`polymarket_outcome_entity`, appended to keep CSV
+headers append-only), and shown in text reports, packets, and the
+evidence-confidence summary.

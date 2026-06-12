@@ -32,6 +32,7 @@ from arb_scanner.app.markets.discovery import (
     determination_time,
     evaluate_pair,
     kalshi_is_scannable,
+    kalshi_outcome_entity,
     sort_manual_review_pairs,
 )
 from arb_scanner.app.markets.parsers import parse_features
@@ -311,7 +312,16 @@ def _candidate_positions(
     # still flows through the same conservative rule gates.
     broad_limit = max(10, min(max(50, poly_market_count // 100), poly_market_count // 20))
     rare_limit = max(2, min(max(10, poly_market_count // 500), poly_market_count // 100))
-    for token in parse_features(str(kalshi_market.get("title") or "")).tokens:
+    # Categorical Kalshi markets carry a generic title; the per-contract
+    # outcome entity (candidate, participant) lives in custom_strike /
+    # yes_sub_title. Including those tokens is recall-only: it lets the
+    # entity-aligned Polymarket market pair up, and every formed pair still
+    # passes the unchanged conservative validation.
+    searchable = str(kalshi_market.get("title") or "")
+    entity = kalshi_outcome_entity(kalshi_market)
+    if entity is not None:
+        searchable = f"{searchable} {entity.value}"
+    for token in parse_features(searchable).tokens:
         positions = poly_index.get(token)
         if not positions or len(positions) > broad_limit:
             continue
@@ -366,7 +376,7 @@ def _rejection_bucket(reason: str) -> str:
         ("basket_scope_conflict", ("basket_scope_conflict",)),
         ("candidate_set_conflict", ("candidate_set_conflict",)),
         ("player_prop_scope_conflict", ("player_prop_scope_conflict",)),
-        ("outcome_entity_conflict", ("outcome party",)),
+        ("outcome_entity_conflict", ("outcome party", "outcome entity")),
         ("resolution_source_conflict", ("resolution source",)),
         ("void_policy_conflict", ("void policy", "void_policy_conflict")),
         ("sports_policy_conflict", ("sports postponement",)),

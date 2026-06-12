@@ -106,6 +106,8 @@ EXPORT_FIELDS: tuple[str, ...] = (
     "unresolved_fields",
     "next_human_action",
     "evidence_confidence_summary",
+    "kalshi_outcome_entity",
+    "polymarket_outcome_entity",
 )
 
 #: Human follow-up per primary blocker. Keys are matched by prefix against
@@ -114,6 +116,10 @@ _NEXT_ACTIONS: tuple[tuple[str, str], ...] = (
     (
         "source_finalization",
         "compare venue source/finalization rules and official close policy",
+    ),
+    (
+        "outcome_entity",
+        "confirm both venues resolve on the same candidate/participant",
     ),
     ("void_policy", "verify cancellation/void handling in both venues' full terms"),
     ("candidate_set", "compare exact candidate lists and replacement rules"),
@@ -361,6 +367,8 @@ def pair_record(row: MatchedPairRow) -> dict[str, Any]:
         "polymarket_cancellation_policy_basis": poly.get("cancellation_policy_basis"),
         "kalshi_source_finalization_basis": kalshi.get("source_finalization_basis"),
         "polymarket_source_finalization_basis": poly.get("source_finalization_basis"),
+        "kalshi_outcome_entity": details.get("kalshi_outcome_entity"),
+        "polymarket_outcome_entity": details.get("poly_outcome_entity"),
     }
     record.update(
         blocking_summary(
@@ -385,6 +393,7 @@ def _evidence_confidence_summary(details: dict[str, Any]) -> str:
         ("type", "kalshi_market_type_evidence", "poly_market_type_evidence"),
         ("date", "kalshi_event_date_evidence", "poly_event_date_evidence"),
         ("threshold", "kalshi_threshold_evidence", "poly_threshold_evidence"),
+        ("entity", "kalshi_outcome_entity_evidence", "poly_outcome_entity_evidence"),
     ]
     parts = [
         f"{label}={_confidence_of(details.get(kalshi_key))}/"
@@ -502,6 +511,11 @@ def render_verification_packet(records: list[dict[str, Any]]) -> list[str]:
                 (
                     f"    polymarket slug: {record.get('polymarket_slug') or 'unknown'} | "
                     f"url: {record.get('polymarket_url') or 'not derivable'}"
+                ),
+                (
+                    "    outcome entities: kalshi="
+                    f"{record.get('kalshi_outcome_entity') or 'unknown'} | polymarket="
+                    f"{record.get('polymarket_outcome_entity') or 'unknown'}"
                 ),
                 "  verify manually before trusting this match:",
             ]

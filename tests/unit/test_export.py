@@ -157,7 +157,8 @@ class TestPairRecord:
             "verify determination/settlement timing on both venues"
         )
         assert record["evidence_confidence_summary"] == (
-            "type=none/none date=none/none threshold=none/none fee=market_metadata"
+            "type=none/none date=none/none threshold=none/none entity=none/none "
+            "fee=market_metadata"
         )
         with_evidence = make_row(
             matched_fields={

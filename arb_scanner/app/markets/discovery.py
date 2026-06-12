@@ -266,6 +266,98 @@ def _party_evidence(text: str, source: str) -> Evidence | None:
     return None
 
 
+# Outcome-entity extraction, verified 2026-06-11 against the KXDCMAYORD
+# family (docs/VERIFICATION.md §15). Kalshi categorical markets carry a
+# generic title ("Who will win the 2026 D.C. Democratic Mayoral Primary?")
+# while the per-contract outcome entity lives in custom_strike
+# ({'Candidate/Party': 'Muriel Bowser'}) and yes_sub_title; Polymarket puts
+# the entity in each market's question ("Will Christina Henderson win …").
+# Title-only matching therefore paired every Kalshi contract with every
+# Polymarket candidate at high confidence.
+_ENTITY_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+_ENTITY_VALUE_RE = re.compile(r"^[A-Za-z][A-Za-z'.\- ]+$")
+_POLY_QUESTION_ENTITY_RE = re.compile(
+    r"^will\s+([A-Z][\w'.\-]+(?:\s+[A-Z][\w'.\-]+){1,3})\s+(?:win|be|become)\b",
+    re.IGNORECASE,
+)
+_GENERIC_SUBTITLES = frozenset({"yes", "no", "other", "none of the above"})
+
+
+def normalize_entity_name(raw: str) -> str:
+    """Lowercase, strip punctuation/suffixes, collapse whitespace.
+
+    Conservative: only generational suffixes are dropped; initials are kept
+    so "Brianne K. Nadeau" stays distinguishable from another Brianne Nadeau.
+    """
+    cleaned = re.sub(r"[^\w\s'-]", " ", raw.lower())
+    tokens = [token for token in cleaned.split() if token not in _ENTITY_NAME_SUFFIXES]
+    return " ".join(tokens)
+
+
+def _entity_like(value: str) -> bool:
+    text = value.strip()
+    return (
+        bool(_ENTITY_VALUE_RE.match(text))
+        and text.lower() not in _GENERIC_SUBTITLES
+        and len(normalize_entity_name(text).split()) >= 2
+    )
+
+
+def kalshi_outcome_entity(market: dict[str, Any]) -> Evidence | None:
+    """Per-contract outcome entity from explicit Kalshi fields.
+
+    custom_strike values outrank yes_sub_title; both outrank anything in the
+    generic title (which is never used). Values that are not name-like
+    (numeric strikes, UUIDs, bare Yes/No) extract nothing.
+    """
+    custom = market.get("custom_strike")
+    if isinstance(custom, dict):
+        for value in custom.values():
+            if isinstance(value, str) and _entity_like(value):
+                return Evidence(
+                    normalize_entity_name(value), EvidenceConfidence.HIGH, "custom_strike"
+                )
+    subtitle = str(market.get("yes_sub_title") or "")
+    if _entity_like(subtitle):
+        return Evidence(normalize_entity_name(subtitle), EvidenceConfidence.HIGH, "yes_sub_title")
+    return None
+
+
+def poly_outcome_entity(poly: PolymarketMarket) -> Evidence | None:
+    """Outcome entity from Polymarket group-item metadata or the question."""
+    group_item = str(poly.raw.get("groupItemTitle") or "")
+    if _entity_like(group_item):
+        return Evidence(
+            normalize_entity_name(group_item), EvidenceConfidence.HIGH, "group_item_title"
+        )
+    match = _POLY_QUESTION_ENTITY_RE.match(poly.question.strip())
+    if match and _entity_like(match.group(1)):
+        return Evidence(normalize_entity_name(match.group(1)), EvidenceConfidence.HIGH, "question")
+    return None
+
+
+def outcome_entities_conflict(kalshi_name: str, poly_name: str) -> bool:
+    """True only when the names are provably different entities.
+
+    Subset names ("brianne nadeau" vs "brianne k nadeau") are the same
+    person; differing surnames or differing full first names conflict;
+    initial-only or single-token differences are ambiguous and never
+    conflict. False acceptance is worse than false manual_review — and false
+    rejection is worse than either, so ambiguity always falls through.
+    """
+    kalshi_tokens, poly_tokens = kalshi_name.split(), poly_name.split()
+    if kalshi_name == poly_name:
+        return False
+    if len(kalshi_tokens) < 2 or len(poly_tokens) < 2:
+        return False
+    if set(kalshi_tokens) <= set(poly_tokens) or set(poly_tokens) <= set(kalshi_tokens):
+        return False
+    if kalshi_tokens[-1] != poly_tokens[-1]:
+        return True
+    first_kalshi, first_poly = kalshi_tokens[0], poly_tokens[0]
+    return len(first_kalshi) > 1 and len(first_poly) > 1 and first_kalshi != first_poly
+
+
 def _confident_conflict(name: str, left: Evidence | None, right: Evidence | None) -> str | None:
     if left is None or right is None or left.value == right.value:
         return None
@@ -538,6 +630,8 @@ def evaluate_pair(
     poly_state_evidence = _state_evidence(poly.question, "title")
     kalshi_party_evidence = _party_evidence(kalshi_title, "title")
     poly_party_evidence = _party_evidence(poly.question, "title")
+    kalshi_entity_evidence = kalshi_outcome_entity(kalshi_market)
+    poly_entity_evidence = poly_outcome_entity(poly)
     kalshi_date_evidence = _effective_evidence(
         kalshi_features.event_date_evidence, ticker.event_date
     )
@@ -557,6 +651,11 @@ def evaluate_pair(
         *_presence_warning("event_date", kalshi_date_evidence, poly_date_evidence),
         *_presence_warning("event_year", kalshi_year_evidence, poly_year_evidence),
         *_presence_warning("threshold", effective_k_threshold, poly_threshold_evidence),
+        *(
+            ("outcome_entity unverified on one venue",)
+            if (kalshi_entity_evidence is None) != (poly_entity_evidence is None)
+            else ()
+        ),
     )
     ticker_only_warnings = tuple(
         f"{name} inferred from Kalshi ticker only"
@@ -579,6 +678,18 @@ def evaluate_pair(
         conflict = _confident_conflict(name, left, right)
         if conflict and not any(conflict in existing for existing in structured_conflicts):
             structured_conflicts.append(conflict)
+    # Person-name comparison needs subset logic (initials, middle names), so
+    # entity conflicts use their own comparator instead of value equality.
+    if (
+        kalshi_entity_evidence is not None
+        and poly_entity_evidence is not None
+        and outcome_entities_conflict(kalshi_entity_evidence.value, poly_entity_evidence.value)
+    ):
+        structured_conflicts.append(
+            f"outcome entity {kalshi_entity_evidence.value} "
+            f"({kalshi_entity_evidence.source}) != {poly_entity_evidence.value} "
+            f"({poly_entity_evidence.source})"
+        )
 
     combined_rules = RuleEquivalenceResult(
         hard_failures=rules.hard_failures,
@@ -652,6 +763,14 @@ def evaluate_pair(
                 kalshi_party_evidence.value if kalshi_party_evidence else None
             ),
             "poly_outcome_party": poly_party_evidence.value if poly_party_evidence else None,
+            "kalshi_outcome_entity": (
+                kalshi_entity_evidence.value if kalshi_entity_evidence else None
+            ),
+            "poly_outcome_entity": (
+                poly_entity_evidence.value if poly_entity_evidence else None
+            ),
+            "kalshi_outcome_entity_evidence": _evidence(kalshi_entity_evidence),
+            "poly_outcome_entity_evidence": _evidence(poly_entity_evidence),
             "category": poly.category or kalshi_category,
         },
         differing_fields=differing,

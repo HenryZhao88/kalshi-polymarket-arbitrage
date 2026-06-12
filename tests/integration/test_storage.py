@@ -775,6 +775,77 @@ class TestEvaluatePairEndToEnd:
         assert not any("player_prop_scope_conflict" in r for r in pair.status_reasons)
         assert pair.status is not MatchStatus.ACCEPTED  # rule facts still unverified
 
+    @staticmethod
+    def dc_mayor_markets(
+        kalshi_candidate: str, poly_candidate: str
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        """Live KXDCMAYORD shape (docs/VERIFICATION.md §15): generic Kalshi
+        categorical title, candidate in custom_strike/yes_sub_title."""
+        kalshi: dict[str, object] = {
+            "ticker": "KXDCMAYORD-26-X",
+            "title": "Who will win the 2026 D.C. Democratic Mayoral Primary?",
+            "yes_sub_title": kalshi_candidate,
+            "custom_strike": {"Candidate/Party": kalshi_candidate},
+            "expected_expiration_time": "2026-06-16T15:00:00Z",
+            "rules_primary": (
+                f"If {kalshi_candidate} wins the 2026 D.C. Democratic Mayoral "
+                "Primary in 2026, then the market resolves to Yes."
+            ),
+        }
+        poly: dict[str, object] = {
+            "conditionId": "0xdcmayor",
+            "question": (
+                f"Will {poly_candidate} win the 2026 Democratic D.C. Mayoral Primary?"
+            ),
+            "clobTokenIds": '["111", "222"]',
+            "endDate": "2026-06-16T15:00:00Z",
+        }
+        return kalshi, poly
+
+    def test_dc_mayor_different_candidates_rejected_with_entity_conflict(self) -> None:
+        kalshi, poly = self.dc_mayor_markets("Brianne K. Nadeau", "Christina Henderson")
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.REJECTED
+        assert any("outcome entity" in reason for reason in pair.status_reasons)
+        assert pair.matched_fields["kalshi_outcome_entity"] == "brianne k nadeau"
+        assert pair.matched_fields["poly_outcome_entity"] == "christina henderson"
+
+    def test_dc_mayor_same_candidate_not_entity_rejected(self) -> None:
+        kalshi, poly = self.dc_mayor_markets("Brianne K. Nadeau", "Brianne K. Nadeau")
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert not any("outcome entity" in reason for reason in pair.status_reasons)
+        # Matching entities only prevent false rejection; rule facts are
+        # still unverified, so the pair stays in review — never accepted.
+        assert pair.status is MatchStatus.MANUAL_REVIEW
+
+    def test_dc_mayor_subset_name_not_rejected(self) -> None:
+        # Missing middle initial is the same person, never a conflict.
+        kalshi, poly = self.dc_mayor_markets("Brianne K. Nadeau", "Brianne Nadeau")
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert not any("outcome entity" in reason for reason in pair.status_reasons)
+
+    def test_dc_mayor_entity_from_custom_strike_when_subtitle_generic(self) -> None:
+        kalshi, poly = self.dc_mayor_markets("Kenyan McDuffie", "Kenyan McDuffie")
+        kalshi["yes_sub_title"] = "Yes"
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        evidence = pair.matched_fields["kalshi_outcome_entity_evidence"]
+        assert evidence is not None and evidence["source"] == "custom_strike"
+
+    def test_dc_mayor_one_sided_entity_is_unverified_manual_review(self) -> None:
+        kalshi, poly = self.dc_mayor_markets("Brianne K. Nadeau", "Brianne K. Nadeau")
+        # Polymarket title without the "Will <name> win" shape: no extraction.
+        poly["question"] = "2026 Democratic D.C. Mayoral Primary winner market"
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is not MatchStatus.ACCEPTED
+        if pair.status is MatchStatus.MANUAL_REVIEW:
+            assert any("outcome_entity unverified" in r for r in pair.status_reasons)
+            assert "outcome_entity" in pair.missing_rule_fields
+
     def test_title_match_but_missing_rules_is_manual_review(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")
