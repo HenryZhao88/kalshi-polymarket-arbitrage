@@ -809,15 +809,19 @@ Same pass, justified by the same 10k rows:
   so All-Star-vs-strikeout-leader pairs reject through the existing
   `player_prop_scope_conflict`.
 
-**Live-confirmation status:** the post-change 10k scan could not run — the
-local network began intercepting TLS through a Zscaler proxy whose root CA is
-not installed on this machine (verified: leaf cert issued by "Zscaler
-Intermediate Root CA"; no Zscaler certificate in the System/login keychains,
-certifi, or the OpenSSL bundle). Commit `5a4a354` is therefore **locally
-validated only**; the §13 check-log expectations
-(`stat_leader_rule_mismatch>=1`, All-Star rows rejecting, `manual_review<=49`)
-remain queued and must be asserted against a real run before trusting the
-detectors live.
+**Live-confirmation status (resolved 2026-06-12):** the original post-change
+scan was blocked by Zscaler TLS interception on the prior network (leaf cert
+issued by "Zscaler Intermediate Root CA"; no Zscaler certificate in the
+System/login keychains, certifi, or the OpenSSL bundle). After moving off
+that network (VPN), both venue gates returned `200` with full certificate
+verification and the 10k confirmation ran clean: funnel
+`raw_title=96260 structured=4962 manual_review=46 accepted=0`, check-log
+5/5 PASS (`accepted=0`, `stat_leader_rule_mismatch>=1` actual 17,
+`outcome_entity_conflict>=1` actual 271, `player_prop_scope_conflict>=1`
+actual 280, `manual_review<=49` actual 46). All 17 KXLEADERMLBKS rows carry
+aligned entities on both venues (including NFKD-folded Sánchez/Luzardo) and
+the tie-policy diagnostic (`ties_split` vs `sole_winner_tiebreak`); no
+All-Star pair appears in manual review. Commit `5a4a354` is live-confirmed.
 
 ### Corporate TLS interception: safe configuration
 
