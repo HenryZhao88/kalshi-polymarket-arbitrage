@@ -15,6 +15,8 @@ from arb_scanner.app.markets.rule_equivalence import (
     cancellation_policy_basis,
     cancellation_policy_terms,
     candidate_set_conflict,
+    central_bank_decision,
+    central_bank_direction_conflict,
     continent_scope_conflict,
     crypto_performance_vs_price_threshold_conflict,
     decide_status,
@@ -1111,6 +1113,117 @@ class TestPlayerPropScopeConflict:
     def test_ambiguous_side_falls_through(self) -> None:
         both = "Will Yamamoto win NL MVP and lead Pro Baseball in wins?"
         assert player_prop_scope_conflict(both, POLY_TRADED) is None
+
+
+# Live KXCBDECISIONMEXICO text from the 2026-06-11 10k run
+# (docs/VERIFICATION.md §16). The Polymarket rules enumerate every outcome,
+# so direction must be classified from the title line.
+KALSHI_CB_CUT25 = (
+    "Will the Bank of Mexico Cut 25bps at the June Bank of Mexico Governing "
+    "Board meeting?\n"
+    "If the Bank of Mexico takes the action of Cut 25bps at June Bank of "
+    "Mexico Governing Board meeting, then the market resolves to Yes. The "
+    "market resolves based on the official policy rate decision."
+)
+POLY_CB_INCREASE = (
+    "Will the Bank of Mexico announce an increase at the June meeting?\n"
+    "This market will resolve according to the change in the target for the "
+    "overnight interbank interest rate as a result of the monetary policy "
+    "decision of the Bank of Mexico's June 2026 meeting. It will resolve to "
+    "Increase if the rate is raised, Decrease if the rate is lowered, and No "
+    "Change otherwise."
+)
+POLY_CB_DECREASE = POLY_CB_INCREASE.replace(
+    "announce an increase", "announce a decrease"
+)
+
+
+class TestCentralBankDecision:
+    def test_kalshi_cut_with_magnitude(self) -> None:
+        assert central_bank_decision(KALSHI_CB_CUT25) == ("cut", "25bps")
+
+    def test_kalshi_or_more_magnitude(self) -> None:
+        text = "Will the Bank of Mexico Cut 50bps+ at the June meeting?"
+        assert central_bank_decision(text) == ("cut", "50bps_or_more")
+
+    def test_poly_direction_from_title_despite_enumerating_rules(self) -> None:
+        # The rules text names increase, decrease, AND no change — the title
+        # line must win or the live family classifies as ambiguous.
+        assert central_bank_decision(POLY_CB_INCREASE) == ("hike", "any")
+        assert central_bank_decision(POLY_CB_DECREASE) == ("cut", "any")
+
+    def test_no_central_bank_context_extracts_nothing(self) -> None:
+        assert central_bank_decision("Will the Yankees increase their lead?") is None
+
+    def test_ambiguous_title_and_rules_extract_nothing(self) -> None:
+        ambiguous = (
+            "Bank of Mexico June decision?\nResolves to Increase if raised, "
+            "Decrease if lowered."
+        )
+        assert central_bank_decision(ambiguous) is None
+
+
+class TestCentralBankDirectionConflict:
+    def test_cut_vs_increase_is_rejected(self) -> None:
+        message = central_bank_direction_conflict(KALSHI_CB_CUT25, POLY_CB_INCREASE)
+        assert message is not None
+        assert "central_bank_direction_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_CB_CUT25,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_CB_INCREASE,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("central_bank_direction_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_hold_vs_move_is_rejected(self) -> None:
+        hold = "Will the Bank of Mexico hold rates unchanged at the June meeting?"
+        assert central_bank_direction_conflict(hold, POLY_CB_INCREASE) is not None
+
+    def test_same_direction_same_magnitude_not_rejected(self) -> None:
+        assert central_bank_direction_conflict(KALSHI_CB_CUT25, KALSHI_CB_CUT25) is None
+
+    def test_same_direction_different_magnitude_is_diagnostic_only(self) -> None:
+        # Cut 25bps vs any decrease: overlapping but not equivalent.
+        assert central_bank_direction_conflict(KALSHI_CB_CUT25, POLY_CB_DECREASE) is None
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_CB_CUT25,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_CB_DECREASE,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert not any("central_bank" in f for f in result.hard_failures)
+        assert any("central_bank_magnitude_mismatch" in w for w in result.warnings)
+        assert "central_bank_magnitude" in result.missing_fields
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_ambiguous_side_falls_through(self) -> None:
+        vague = "Bank of Mexico June 2026 meeting outcome market"
+        assert central_bank_direction_conflict(vague, POLY_CB_INCREASE) is None
+
+    def test_magnitude_warning_cannot_accept(self) -> None:
+        result = validate_rules(
+            kalshi_facts(resolution_text=KALSHI_CB_CUT25),
+            poly_facts(resolution_text=POLY_CB_DECREASE),
+        )
+        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
 
 
 class TestDecideStatus:

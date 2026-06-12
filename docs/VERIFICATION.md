@@ -725,3 +725,33 @@ Entities are persisted in matched_fields, exported
 (`kalshi_outcome_entity`/`polymarket_outcome_entity`, appended to keep CSV
 headers append-only), and shown in text reports, packets, and the
 evidence-confidence summary.
+
+Live effect (10k window, 2026-06-11): manual_review 153 → 61;
+KXDCMAYORD 104 → 12, with all 12 survivors entity-aligned;
+`outcome_entity_conflict=256` in the rejection histogram; accepted=0.
+
+## 16. Central-bank decision direction/magnitude (2026-06-11)
+
+Verified against the KXCBDECISIONMEXICO family (18 manual-review rows in the
+10k window). Kalshi titles carry direction and magnitude ("Will the Bank of
+Mexico Cut 25bps at the June … meeting?"); Polymarket titles carry direction
+only ("Will the Bank of Mexico announce an increase at the June meeting?"),
+and the Polymarket rules text enumerates every outcome ("Increase if raised,
+Decrease if lowered, No Change otherwise"), so classification reads the
+title line first — otherwise the live family would classify as ambiguous.
+
+Encoded in `rule_equivalence.py`:
+
+- `central_bank_decision`: requires rate/monetary-policy context; classifies
+  direction (cut / hike / hold) and magnitude (`<n>bps`, `<n>bps_or_more`,
+  or `any`); multiple or zero directions in scope → None (ambiguous never
+  fires anything).
+- `central_bank_direction_conflict` (hard rejection): both sides classified
+  and directions differ — cut vs increase, hold vs move.
+- `central_bank_magnitude_mismatch` (diagnostic, manual_review): same
+  direction, different magnitude scope (Cut 25bps vs any decrease) — the
+  contracts overlap but are not equivalent (a 50bps cut pays Polymarket
+  "decrease" Yes and Kalshi "Cut 25bps" No).
+
+Rejection/diagnostic-only; acceptance logic unchanged. No arbitrage or
+profitability claim is implied for any same-direction pair.

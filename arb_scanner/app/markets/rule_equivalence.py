@@ -480,6 +480,65 @@ def player_prop_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
     )
 
 
+# Central-bank decision direction/magnitude, verified 2026-06-11 against the
+# KXCBDECISIONMEXICO family (docs/VERIFICATION.md §16). Kalshi titles carry
+# direction AND magnitude ("Cut 25bps"); Polymarket titles carry direction
+# only ("announce an increase"). Cross-direction pairs (cut vs increase) are
+# never the same bet; same-direction pairs with different magnitude scopes
+# (Cut 25bps vs any decrease) stay manual_review with a magnitude diagnostic.
+_CB_CONTEXT_RE = re.compile(
+    r"\brate\b|\bbps\b|\bbasis points?\b|\bmonetary policy\b|\bcentral bank\b|"
+    r"\bbank of \w+|\bfederal reserve\b|\bfomc\b",
+    re.IGNORECASE,
+)
+_CB_DIRECTIONS: tuple[tuple[str, str], ...] = (
+    ("cut", r"\bcuts?\b|\bdecrease[sd]?\b|\blower(?:s|ed|ing)?\b"),
+    ("hike", r"\bhikes?\b|\bincrease[sd]?\b|\braise[sd]?\b"),
+    ("hold", r"\bno change\b|\bhold[s]?\b|\bunchanged\b|\bmaintain(?:s|ed)?\b"),
+)
+_CB_MAGNITUDE_RE = re.compile(r"(\d{1,3})\s?bps(\+|\s?or more)?", re.IGNORECASE)
+
+
+def central_bank_decision(text: str) -> tuple[str, str] | None:
+    """(direction, magnitude) for a rate-decision market; None if ambiguous.
+
+    The title line (everything before the first newline) is classified
+    first: venue rules text routinely enumerates every outcome ("resolves to
+    Increase if raised, Decrease if lowered"), which would otherwise read as
+    ambiguous. Magnitude is "<n>bps", "<n>bps_or_more", or "any".
+    """
+    if not _CB_CONTEXT_RE.search(text):
+        return None
+    for scope in (text.split("\n", 1)[0], text):
+        directions = {
+            name for name, pattern in _CB_DIRECTIONS if re.search(pattern, scope, re.IGNORECASE)
+        }
+        if len(directions) == 1:
+            (direction,) = directions
+            match = _CB_MAGNITUDE_RE.search(scope)
+            if match is None:
+                return direction, "any"
+            suffix = "_or_more" if match.group(2) else ""
+            return direction, f"{match.group(1)}bps{suffix}"
+    return None
+
+
+def central_bank_direction_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect rate-decision markets resolving on opposite/incompatible moves."""
+    kalshi_decision = central_bank_decision(kalshi_text)
+    poly_decision = central_bank_decision(poly_text)
+    if kalshi_decision is None or poly_decision is None:
+        return None
+    if kalshi_decision[0] == poly_decision[0]:
+        return None
+    return (
+        "central_bank_direction_conflict: the venues resolve on different "
+        f"rate-decision directions (kalshi={kalshi_decision[0]} "
+        f"{kalshi_decision[1]}, polymarket={poly_decision[0]} "
+        f"{poly_decision[1]}; verified 2026-06-11, docs/VERIFICATION.md §16)"
+    )
+
+
 # Cancellation/void-policy basis extraction, verified 2026-06-11 against
 # KXWCCONTINENT-26-SA vs Polymarket "South America wins the 2026 FIFA World
 # Cup" (docs/VERIFICATION.md §10). Kalshi ACHIEVEMENTS-style contracts settle
@@ -780,10 +839,28 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         void_policy_conflict,
         candidate_set_conflict,
         player_prop_scope_conflict,
+        central_bank_direction_conflict,
     ):
         conflict = detect(kalshi_combined, poly_combined)
         if conflict:
             failures.append(conflict)
+    # Same rate-decision direction but different magnitude scopes (Cut 25bps
+    # vs any decrease): plausibly overlapping, never proven equivalent —
+    # diagnostic only, keeps manual_review.
+    kalshi_cb = central_bank_decision(kalshi_combined)
+    poly_cb = central_bank_decision(poly_combined)
+    if (
+        kalshi_cb is not None
+        and poly_cb is not None
+        and kalshi_cb[0] == poly_cb[0]
+        and kalshi_cb[1] != poly_cb[1]
+    ):
+        warnings.append(
+            f"central_bank_magnitude_mismatch: kalshi={kalshi_cb[0]} {kalshi_cb[1]} "
+            f"polymarket={poly_cb[0]} {poly_cb[1]} — same direction, different "
+            "magnitude scope"
+        )
+        missing.append("central_bank_magnitude")
     # One side enumerates a named slate but the other side's set is neither a
     # slate nor a provable cohort: can't prove a conflict, but the sets are
     # unverified — surface explicitly and stay in manual_review.
