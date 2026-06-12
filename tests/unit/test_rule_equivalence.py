@@ -20,6 +20,8 @@ from arb_scanner.app.markets.rule_equivalence import (
     decide_status,
     extract_candidate_slate,
     office_level_conflict,
+    player_prop_kind,
+    player_prop_scope_conflict,
     settlement_basis_conflict,
     source_finalization_basis,
     source_finalization_terms,
@@ -997,6 +999,118 @@ class TestCandidateSetConflict:
             poly_facts(resolution_text=vague_sweep),
         )
         assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+
+
+# Live titles from the 2026-06-11 10k-market dry-run (docs/VERIFICATION.md §14).
+KALSHI_MVP = "Will Yoshinobu Yamamoto win NL MVP?"
+KALSHI_WINS_LEADER = (
+    "Will Yoshinobu Yamamoto lead Pro Baseball in wins for the 2026 regular season?"
+)
+KALSHI_K_LEADER = (
+    "Will Yoshinobu Yamamoto lead Pro Baseball in strikeouts for the 2026 regular season?"
+)
+POLY_K_LEADER = (
+    "Will Yoshinobu Yamamoto strike out the most batters during the 2026 MLB regular season?"
+)
+POLY_TRADED = "Will Brian Thomas Jr. be traded?"
+KALSHI_REC_YDS_THRESHOLD = (
+    "Will Brian Thomas Jr. record 1000+ receiving yards during 2026-27 Pro Football "
+    "regular season?"
+)
+KALSHI_REC_YDS_LEADER = (
+    "Will Brian Thomas Jr. lead Pro Football in Receiving Yards for the 2026-2027 "
+    "regular season?"
+)
+
+
+class TestPlayerPropKind:
+    def test_award_kinds(self) -> None:
+        assert player_prop_kind(KALSHI_MVP) == "award_winner"
+        assert (
+            player_prop_kind("Will Kayvon Thibodeaux win the Defensive Player of the Year?")
+            == "award_winner"
+        )
+        assert (
+            player_prop_kind("Will Trent Williams be #1 on the Pro Football Top 100 List?")
+            == "award_winner"
+        )
+
+    def test_stat_leader_kinds_normalize_phrasings(self) -> None:
+        # Both venue phrasings of the same statistic map to the same kind.
+        assert player_prop_kind(KALSHI_K_LEADER) == "stat_leader:strikeouts"
+        assert player_prop_kind(POLY_K_LEADER) == "stat_leader:strikeouts"
+        assert player_prop_kind(KALSHI_WINS_LEADER) == "stat_leader:wins"
+
+    def test_transaction_and_threshold_kinds(self) -> None:
+        assert player_prop_kind(POLY_TRADED) == "transaction"
+        assert player_prop_kind(KALSHI_REC_YDS_THRESHOLD) == "stat_threshold"
+
+    def test_plain_text_has_no_kind(self) -> None:
+        assert player_prop_kind("Will Boston beat New York?") is None
+
+    def test_multiple_kinds_are_ambiguous(self) -> None:
+        assert (
+            player_prop_kind("Will Yamamoto win NL MVP and lead Pro Baseball in wins?") is None
+        )
+
+
+class TestPlayerPropScopeConflict:
+    def test_award_vs_stat_leader_is_rejected(self) -> None:
+        message = player_prop_scope_conflict(KALSHI_MVP, POLY_K_LEADER)
+        assert message is not None
+        assert "player_prop_scope_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_MVP,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_K_LEADER,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("player_prop_scope_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_different_stat_leaders_conflict(self) -> None:
+        # wins leader vs strikeouts leader: same player, different bet.
+        assert player_prop_scope_conflict(KALSHI_WINS_LEADER, POLY_K_LEADER) is not None
+
+    def test_same_stat_leader_falls_through(self) -> None:
+        # The potentially equivalent family: Kalshi "lead in strikeouts" vs
+        # Polymarket "strike out the most batters". Same statistic — never
+        # rejected by this rule.
+        assert player_prop_scope_conflict(KALSHI_K_LEADER, POLY_K_LEADER) is None
+
+    def test_award_vs_transaction_is_rejected(self) -> None:
+        assert (
+            player_prop_scope_conflict(
+                "Will Kayvon Thibodeaux win the Defensive Player of the Year?",
+                "Will Kayvon Thibodeaux be traded?",
+            )
+            is not None
+        )
+
+    def test_stat_threshold_vs_transaction_is_rejected(self) -> None:
+        assert player_prop_scope_conflict(KALSHI_REC_YDS_THRESHOLD, POLY_TRADED) is not None
+
+    def test_stat_leader_vs_transaction_is_rejected(self) -> None:
+        assert player_prop_scope_conflict(KALSHI_REC_YDS_LEADER, POLY_TRADED) is not None
+
+    def test_same_kind_pairs_fall_through(self) -> None:
+        assert player_prop_scope_conflict(KALSHI_MVP, KALSHI_MVP) is None
+        assert player_prop_scope_conflict(POLY_TRADED, POLY_TRADED) is None
+
+    def test_unclassified_side_falls_through(self) -> None:
+        assert player_prop_scope_conflict(KALSHI_MVP, "Will Boston beat New York?") is None
+
+    def test_ambiguous_side_falls_through(self) -> None:
+        both = "Will Yamamoto win NL MVP and lead Pro Baseball in wins?"
+        assert player_prop_scope_conflict(both, POLY_TRADED) is None
 
 
 class TestDecideStatus:

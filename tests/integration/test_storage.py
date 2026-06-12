@@ -730,6 +730,51 @@ class TestEvaluatePairEndToEnd:
         assert pair.status is MatchStatus.REJECTED
         assert any("candidate_set_conflict" in reason for reason in pair.status_reasons)
 
+    def test_player_award_vs_trade_is_rejected_end_to_end(self) -> None:
+        # Live 10k-run family: same athlete, unrelated propositions.
+        kalshi = {
+            "ticker": "KXNFLDPOTY-27-KTHI",
+            "title": "Will Kayvon Thibodeaux win the Defensive Player of the Year?",
+            "expected_expiration_time": "2027-02-15T00:00:00Z",
+            "category": "sports",
+        }
+        poly = {
+            "conditionId": "0xtrade",
+            "question": "Will Kayvon Thibodeaux be traded?",
+            "clobTokenIds": '["111", "222"]',
+            "tags": ["Sports"],
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.REJECTED
+        assert any("player_prop_scope_conflict" in r for r in pair.status_reasons)
+
+    def test_same_stat_leader_pair_is_not_prop_rejected(self) -> None:
+        # Same statistic, different phrasings: must NOT be rejected by the
+        # prop rule (stays with the ordinary conservative checks).
+        kalshi = {
+            "ticker": "KXLEADERMLBKS-26-YYAM",
+            "title": (
+                "Will Yoshinobu Yamamoto lead Pro Baseball in strikeouts for "
+                "the 2026 regular season?"
+            ),
+            "expected_expiration_time": "2026-10-01T00:00:00Z",
+            "category": "sports",
+        }
+        poly = {
+            "conditionId": "0xkleader",
+            "question": (
+                "Will Yoshinobu Yamamoto strike out the most batters during "
+                "the 2026 MLB regular season?"
+            ),
+            "clobTokenIds": '["111", "222"]',
+            "tags": ["Sports"],
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert not any("player_prop_scope_conflict" in r for r in pair.status_reasons)
+        assert pair.status is not MatchStatus.ACCEPTED  # rule facts still unverified
+
     def test_title_match_but_missing_rules_is_manual_review(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")

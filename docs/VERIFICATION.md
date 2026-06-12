@@ -640,3 +640,41 @@ in the log — which is how diagnostic warnings like
 `source_finalization_mismatch` and `void_policy_mismatch` are checked, since
 they never appear in the rejection histogram. Exit code 0 only when every
 expectation passes.
+
+## 14. 10,000-market dry-run: prefilter recall collapse and player-prop family (2026-06-11)
+
+First 10k window (`ARB_POLYMARKET_MAX_MARKETS=10000`,
+`ARB_POLYMARKET_MAX_PAGES=100`, alerts off):
+
+- Kalshi discovered=62905 scannable=62903; Polymarket 10000/9942 over 100 pages
+- raw_title=51514, structured=388, manual_review=133, accepted=0, rejected=51381
+
+Two findings:
+
+1. **Prefilter recall collapse.** Structured candidates fell from ~1,330 (5k
+   window) to 388 (10k) and previously-firing conflict buckets
+   (`settlement_basis_conflict`, `continent_scope_conflict`,
+   `candidate_set_conflict`, …) vanished from the histogram. Cause: the
+   token-breadth caps in `_candidate_positions` were absolute
+   (`min(50, n/20)`, `min(10, n/100)`), so growing the corpus pushed
+   previously-rare tokens over the cap and silently dropped known pairs.
+   Fixed by scaling both caps proportionally above 5,000 markets; behavior at
+   smaller windows is unchanged. This is a recall fix only — every recovered
+   pair still flows through the unchanged conservative rule gates. Guarded by
+   a regression test that plants a known pair in growing corpora.
+2. **Player-proposition false-positive family** (~100+ of the 133
+   manual-review rows). Same athlete, different proposition: Kalshi
+   "Will Kayvon Thibodeaux win the Defensive Player of the Year?" vs
+   Polymarket "Will Kayvon Thibodeaux be traded?"; Kalshi "lead Pro Baseball
+   in wins" vs Polymarket "strike out the most batters"; Kalshi "record
+   1000+ receiving yards" vs Polymarket "be traded". Shared name tokens push
+   similarity over the review threshold but the payout events are unrelated.
+
+Encoded as `player_prop_scope_conflict`, a hard rejection over a
+`player_prop_kind` classifier (award_winner, transaction, stat_threshold,
+`stat_leader:<stat>` with venue phrasings normalized per statistic — "lead
+Pro Baseball in strikeouts" ≡ "strike out the most batters"). It fires only
+when both sides classify to exactly one kind and the kinds differ. Same-stat
+pairs (the potentially equivalent family, e.g. Yamamoto strikeout-leader on
+both venues) and ambiguous/unclassified text always fall through to the
+ordinary conservative checks. Rejection-only; acceptance logic unchanged.

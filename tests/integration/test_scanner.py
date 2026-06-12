@@ -32,6 +32,42 @@ NOW = datetime(2026, 6, 11, 11, 43, 26, tzinfo=UTC)
 NOW_MS = int(NOW.timestamp() * 1000)
 
 
+def test_candidate_prefilter_recall_survives_corpus_growth() -> None:
+    """Pairs found in a small window must still be found in a larger one.
+
+    Regression for the 10k-market recall collapse (2026-06-11): absolute
+    token-breadth caps silently dropped known pairs as the corpus grew.
+    """
+    from arb_scanner.app.markets.polymarket import PolymarketMarket
+    from arb_scanner.app.scanner import _poly_candidate_index
+
+    kalshi_market = {"title": "Will South America (CONMEBOL) win the 2026 Men's World Cup?"}
+    target = PolymarketMarket.from_gamma(
+        {
+            "conditionId": "0xtarget",
+            "question": "Will South America (CONMEBOL) win the 2026 FIFA World Cup?",
+            "clobTokenIds": '["1", "2"]',
+            "active": True,
+        }
+    )
+    # Filler markets sharing the broad tokens (2026, world, cup) at scale.
+    fillers = [
+        PolymarketMarket.from_gamma(
+            {
+                "conditionId": f"0xf{i}",
+                "question": f"Will team {i} win a 2026 world cup qualifier match {i}?",
+                "clobTokenIds": '["1", "2"]',
+                "active": True,
+            }
+        )
+        for i in range(3000)
+    ]
+    for markets in ([target, *fillers[:500]], [target, *fillers]):
+        index = _poly_candidate_index(markets)
+        positions = _candidate_positions(kalshi_market, index, len(markets))
+        assert 0 in positions, f"target pair lost at corpus size {len(markets)}"
+
+
 def test_rejection_histogram_uses_one_primary_reason() -> None:
     assert (
         _primary_rejection_bucket(("threshold 1 != 2", "similarity below review threshold"))

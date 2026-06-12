@@ -301,8 +301,16 @@ def _candidate_positions(
 ) -> set[int]:
     evidence: Counter[int] = Counter()
     rare_evidence: Counter[int] = Counter()
-    broad_limit = max(10, min(50, poly_market_count // 20))
-    rare_limit = max(2, min(10, poly_market_count // 100))
+    # Token-breadth caps must scale with corpus size: with an absolute cap,
+    # growing the window pushes previously-rare tokens over the limit and
+    # silently REMOVES candidate pairs (observed at 10k markets on
+    # 2026-06-11: structured pairs fell from ~1.3k to ~0.4k and whole
+    # verified conflict families vanished from the funnel). Behavior at
+    # <=5,000 markets is unchanged; larger windows scale the caps
+    # proportionally. This is a recall fix only — every additional pair
+    # still flows through the same conservative rule gates.
+    broad_limit = max(10, min(max(50, poly_market_count // 100), poly_market_count // 20))
+    rare_limit = max(2, min(max(10, poly_market_count // 500), poly_market_count // 100))
     for token in parse_features(str(kalshi_market.get("title") or "")).tokens:
         positions = poly_index.get(token)
         if not positions or len(positions) > broad_limit:
@@ -357,6 +365,7 @@ def _rejection_bucket(reason: str) -> str:
         ("office_level_conflict", ("office_level_conflict",)),
         ("basket_scope_conflict", ("basket_scope_conflict",)),
         ("candidate_set_conflict", ("candidate_set_conflict",)),
+        ("player_prop_scope_conflict", ("player_prop_scope_conflict",)),
         ("outcome_entity_conflict", ("outcome party",)),
         ("resolution_source_conflict", ("resolution source",)),
         ("void_policy_conflict", ("void policy", "void_policy_conflict")),
@@ -385,12 +394,13 @@ def _primary_rejection_bucket(reasons: tuple[str, ...]) -> str:
         "office_level_conflict": 10,
         "basket_scope_conflict": 11,
         "candidate_set_conflict": 12,
-        "outcome_entity_conflict": 13,
-        "resolution_source_conflict": 14,
-        "void_policy_conflict": 15,
-        "sports_policy_conflict": 16,
-        "similarity_below_review_threshold": 17,
-        "other_rule_conflict": 18,
+        "player_prop_scope_conflict": 13,
+        "outcome_entity_conflict": 14,
+        "resolution_source_conflict": 15,
+        "void_policy_conflict": 16,
+        "sports_policy_conflict": 17,
+        "similarity_below_review_threshold": 18,
+        "other_rule_conflict": 19,
     }
     buckets = {_rejection_bucket(reason) for reason in reasons}
     return min(buckets, key=priority.__getitem__)

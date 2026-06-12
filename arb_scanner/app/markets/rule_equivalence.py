@@ -372,6 +372,114 @@ def stock_close_vs_intramonth_high_conflict(kalshi_text: str, poly_text: str) ->
     )
 
 
+# Player-proposition kinds, verified 2026-06-11 against the 10k-market
+# dry-run (docs/VERIFICATION.md §14). The dominant new false-positive family
+# pairs markets about the SAME player but DIFFERENT propositions: an
+# award ("win NL MVP", "Defensive Player of the Year", "#1 on the Top 100
+# List"), a stat-leader contract for a specific statistic ("lead Pro Baseball
+# in wins"), a stat threshold ("record 1000+ receiving yards"), or a roster
+# transaction ("be traded"). Shared player-name tokens push similarity over
+# the review threshold, but the payout events are unrelated.
+_PLAYER_AWARD_RE = re.compile(
+    r"\bmvp\b|\bplayer of the year\b|\bprotector of the year\b|"
+    r"\brookie of the year\b|\bcy young\b|\bcoach of the year\b|"
+    r"\bon the\b[^.\n]{0,40}\btop \d+ list\b",
+    re.IGNORECASE,
+)
+_PLAYER_TRANSACTION_RE = re.compile(
+    r"\bbe traded\b|\bbe released\b|\bbe waived\b|\bbe cut\b|\bbe signed\b|"
+    r"\bsign(?:s|ed)? with\b|\bretires?\b|\bbe benched\b",
+    re.IGNORECASE,
+)
+#: Stat-leader patterns normalize venue phrasings to one stat name, so
+#: "lead Pro Baseball in strikeouts" and "strike out the most batters" agree.
+_STAT_LEADER_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("strikeouts", r"\blead\b[^.\n]{0,40}\bin strikeouts\b|\bstrike out the most\b"),
+    ("wins", r"\blead\b[^.\n]{0,40}\bin wins\b|\bmost wins\b"),
+    ("era", r"\blead\b[^.\n]{0,40}\bin era\b|\blowest era\b"),
+    ("war", r"\blead\b[^.\n]{0,40}\bin war\b|\bhighest war\b"),
+    ("home_runs", r"\blead\b[^.\n]{0,40}\bin home runs\b|\bmost home runs\b"),
+    ("rbis", r"\blead\b[^.\n]{0,40}\bin rbis?\b|\bmost rbis?\b"),
+    (
+        "receiving_yards",
+        r"\blead\b[^.\n]{0,40}\bin receiving yards\b|\bmost receiving yards\b",
+    ),
+    (
+        "receiving_touchdowns",
+        r"\blead\b[^.\n]{0,40}\bin receiving touchdowns\b|\bmost receiving touchdowns\b",
+    ),
+    (
+        "rushing_touchdowns",
+        r"\blead\b[^.\n]{0,40}\bin rushing touchdowns\b|\bmost rushing touchdowns\b",
+    ),
+    (
+        "rushing_yards",
+        r"\blead\b[^.\n]{0,40}\bin rushing yards\b|\bmost rushing yards\b",
+    ),
+    (
+        "passing_yards",
+        r"\blead\b[^.\n]{0,40}\bin passing yards\b|\bmost passing yards\b",
+    ),
+    (
+        "passing_touchdowns",
+        r"\blead\b[^.\n]{0,40}\bin passing touchdowns\b|\bmost passing touchdowns\b",
+    ),
+    ("sacks", r"\blead\b[^.\n]{0,40}\bin sacks\b|\bmost sacks\b"),
+)
+_STAT_THRESHOLD_RE = re.compile(
+    r"\brecord\b[^.\n]{0,30}\d[\d,]*\+|\b\d[\d,]*\+\s*(?:receiving |rushing |passing )?"
+    r"(?:yards|touchdowns|strikeouts|home runs|receptions)\b",
+    re.IGNORECASE,
+)
+
+
+def player_prop_kind(text: str) -> str | None:
+    """Classify a player proposition; None when absent or ambiguous.
+
+    Returns one of: award_winner, transaction, stat_threshold, or
+    ``stat_leader:<stat>``. Text matching more than one kind (or more than
+    one stat) is ambiguous and classifies as None — ambiguity never rejects.
+    """
+    kinds: set[str] = set()
+    if _PLAYER_AWARD_RE.search(text):
+        kinds.add("award_winner")
+    if _PLAYER_TRANSACTION_RE.search(text):
+        kinds.add("transaction")
+    stats = [
+        name
+        for name, pattern in _STAT_LEADER_PATTERNS
+        if re.search(pattern, text, re.IGNORECASE)
+    ]
+    if len(stats) == 1:
+        kinds.add(f"stat_leader:{stats[0]}")
+    elif len(stats) > 1:
+        return None
+    if not stats and _STAT_THRESHOLD_RE.search(text):
+        kinds.add("stat_threshold")
+    if len(kinds) == 1:
+        return next(iter(kinds))
+    return None
+
+
+def player_prop_scope_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect player markets whose propositions are different bets.
+
+    Fires only when both sides classify to exactly one proposition kind and
+    the kinds differ (a stat name is part of the kind, so two stat-leader
+    markets for different statistics conflict while the same statistic falls
+    through to the ordinary conservative checks).
+    """
+    kalshi_kind = player_prop_kind(kalshi_text)
+    poly_kind = player_prop_kind(poly_text)
+    if kalshi_kind is None or poly_kind is None or kalshi_kind == poly_kind:
+        return None
+    return (
+        "player_prop_scope_conflict: the venues resolve on different player "
+        f"propositions (kalshi={kalshi_kind}, polymarket={poly_kind}; "
+        "verified 2026-06-11, docs/VERIFICATION.md §14)"
+    )
+
+
 # Cancellation/void-policy basis extraction, verified 2026-06-11 against
 # KXWCCONTINENT-26-SA vs Polymarket "South America wins the 2026 FIFA World
 # Cup" (docs/VERIFICATION.md §10). Kalshi ACHIEVEMENTS-style contracts settle
@@ -671,6 +779,7 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         stock_close_vs_intramonth_high_conflict,
         void_policy_conflict,
         candidate_set_conflict,
+        player_prop_scope_conflict,
     ):
         conflict = detect(kalshi_combined, poly_combined)
         if conflict:
