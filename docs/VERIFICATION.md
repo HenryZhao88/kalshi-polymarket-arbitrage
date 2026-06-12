@@ -808,3 +808,28 @@ Same pass, justified by the same 10k rows:
 - **All-Star selection** classifies as `award_winner` in `player_prop_kind`,
   so All-Star-vs-strikeout-leader pairs reject through the existing
   `player_prop_scope_conflict`.
+
+**Live-confirmation status:** the post-change 10k scan could not run — the
+local network began intercepting TLS through a Zscaler proxy whose root CA is
+not installed on this machine (verified: leaf cert issued by "Zscaler
+Intermediate Root CA"; no Zscaler certificate in the System/login keychains,
+certifi, or the OpenSSL bundle). Commit `5a4a354` is therefore **locally
+validated only**; the §13 check-log expectations
+(`stat_leader_rule_mismatch>=1`, All-Star rows rejecting, `manual_review<=49`)
+remain queued and must be asserted against a real run before trusting the
+detectors live.
+
+### Corporate TLS interception: safe configuration
+
+Never disable certificate verification (`curl -k`, `ssl=False`) — that would
+let any on-path box impersonate the venues this scanner's evidence depends
+on. The sanctioned fix is to extend the trust store with the proxy's root CA:
+
+1. Obtain the Zscaler root CA certificate (PEM) from IT.
+2. Build a combined bundle and point OpenSSL/Python at it:
+   `cat "$(python3 -m certifi)" zscaler-root.pem > ~/.config/arb-scanner/ca-bundle.pem`
+   then `export SSL_CERT_FILE=~/.config/arb-scanner/ca-bundle.pem` (aiohttp
+   honors it).
+3. Re-run the gate before any live scan:
+   `curl -s -o /dev/null -w "%{http_code}\n" https://api.elections.kalshi.com/trade-api/v2/markets?limit=1`
+   must print `200` without insecure flags.
