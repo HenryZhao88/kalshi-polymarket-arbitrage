@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from arb_scanner.app.markets.discovery import ManualReviewSort, diagnostic_sort_key
 from arb_scanner.app.storage.engine import init_models, make_engine, make_session_factory
 from arb_scanner.app.storage.export import (
+    blocking_summary_lines,
     pair_record,
     render_csv,
     render_json,
@@ -57,6 +58,7 @@ def render_pair_row(row: MatchedPairRow) -> list[str]:
         else f"ACCEPTED | confidence={row.confidence:.4f}",
         f"  Kalshi: {row.kalshi_ticker} | {details.get('kalshi_title', '')}",
         f"  Polymarket: {row.poly_condition_id} | {details.get('poly_question', '')}",
+        *blocking_summary_lines(record),
         (
             f"  source ids: Kalshi event={record['kalshi_event_ticker'] or 'unknown'} | "
             f"Polymarket slug={record['polymarket_slug'] or 'unknown'} "

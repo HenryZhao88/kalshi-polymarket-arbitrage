@@ -5,6 +5,7 @@ but different void rules; sports early-start divergence; UMA challenge windows.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from arb_scanner.app.markets.rule_equivalence import (
     KalshiRuleFacts,
@@ -13,11 +14,15 @@ from arb_scanner.app.markets.rule_equivalence import (
     basket_scope_conflict,
     cancellation_policy_basis,
     cancellation_policy_terms,
+    candidate_set_conflict,
     continent_scope_conflict,
     crypto_performance_vs_price_threshold_conflict,
     decide_status,
+    extract_candidate_slate,
     office_level_conflict,
     settlement_basis_conflict,
+    source_finalization_basis,
+    source_finalization_terms,
     sports_stage_vs_winner_conflict,
     stock_close_vs_intramonth_high_conflict,
     validate_rules,
@@ -765,6 +770,231 @@ class TestVoidPolicyConflict:
         result = validate_rules(
             kalshi_facts(resolution_text=KALSHI_WC_CONTINENT_RULES),
             poly_facts(resolution_text=POLY_RESOLVES_TO_OTHER),
+        )
+        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+
+
+# Verbatim source/finalization excerpts fetched 2026-06-11
+# (docs/VERIFICATION.md §11).
+KALSHI_SPX_SNAPSHOT = (
+    "Will the S&P 500 be above 8000 on Dec 31, 2026 at 4pm EST?\n"
+    "If the S&P 500 index value on Dec 31, 2026 at 4pm EST is above 8000, "
+    "then the market resolves to Yes."
+)
+POLY_SPX_OFFICIAL_CLOSE = (
+    "Will S&P 500 (SPX) close over $8,000 on the final trading day of December 2026?\n"
+    "This market will resolve to \"Yes\" if the official closing price for "
+    "S&P 500 (SPX) on the final trading day of December 2026 is higher than "
+    "the listed price. If no official closing price is published for that "
+    "session, the market will use the last valid on-exchange trade price of "
+    "the regular session as the effective closing price. The resolution "
+    "source for this market is Yahoo Finance, specifically the S&P 500 (SPX) "
+    "\"Close\" prices available under \"Historical Prices.\""
+)
+
+
+class TestSourceFinalizationBasis:
+    def test_kalshi_snapshot_terms_and_basis(self) -> None:
+        terms = source_finalization_terms(KALSHI_SPX_SNAPSHOT)
+        assert "fixed_time_snapshot" in terms
+        assert source_finalization_basis(KALSHI_SPX_SNAPSHOT) == "fixed_time_snapshot"
+
+    def test_polymarket_official_close_terms_and_basis(self) -> None:
+        terms = source_finalization_terms(POLY_SPX_OFFICIAL_CLOSE)
+        assert "official_close" in terms
+        assert "yahoo_finance_close" in terms
+        assert "historical_close" in terms
+        assert "last_valid_trade" in terms
+        assert source_finalization_basis(POLY_SPX_OFFICIAL_CLOSE) == "official_close"
+
+    def test_contract_terms_language_counts_as_snapshot_family(self) -> None:
+        terms_text = (
+            "The Source Agency is Kalshi. Revisions to the Underlying made "
+            "after Expiration will not be accounted for. If no data is "
+            "available, the Expiration Value will be the value most recently "
+            "available prior to that time."
+        )
+        terms = source_finalization_terms(terms_text)
+        assert "source_agency_kalshi" in terms
+        assert "revisions_ignored_after_expiration" in terms
+        assert "no_data_extension" in terms
+        assert source_finalization_basis(terms_text) == "fixed_time_snapshot"
+
+    def test_wording_only_text_has_no_basis(self) -> None:
+        assert source_finalization_basis("Settles based on the S&P 500 in December.") is None
+
+    def test_both_families_is_ambiguous(self) -> None:
+        both = KALSHI_SPX_SNAPSHOT + " " + POLY_SPX_OFFICIAL_CLOSE
+        assert source_finalization_basis(both) is None
+
+
+class TestSourceFinalizationMismatch:
+    def _result(self, kalshi_text: str, poly_text: str) -> Any:
+        return validate_rules(
+            kalshi_facts(
+                resolution_text=kalshi_text,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=poly_text,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+
+    def test_snapshot_vs_official_close_warns_and_stays_manual_review(self) -> None:
+        result = self._result(KALSHI_SPX_SNAPSHOT, POLY_SPX_OFFICIAL_CLOSE)
+        assert result.hard_failures == ()
+        assert any(
+            "source_finalization_mismatch: kalshi=fixed_time_snapshot "
+            "polymarket=official_close" in w
+            for w in result.warnings
+        )
+        assert "source_finalization_basis" in result.missing_fields
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_same_snapshot_basis_does_not_warn(self) -> None:
+        result = self._result(KALSHI_SPX_SNAPSHOT, KALSHI_SPX_SNAPSHOT)
+        assert not any("source_finalization_mismatch" in w for w in result.warnings)
+
+    def test_same_official_close_basis_does_not_warn(self) -> None:
+        result = self._result(POLY_SPX_OFFICIAL_CLOSE, POLY_SPX_OFFICIAL_CLOSE)
+        assert not any("source_finalization_mismatch" in w for w in result.warnings)
+
+    def test_ambiguous_or_missing_source_text_does_not_warn(self) -> None:
+        vague = "Settles based on the S&P 500 level in December 2026."
+        result = self._result(vague, POLY_SPX_OFFICIAL_CLOSE)
+        assert not any("source_finalization_mismatch" in w for w in result.warnings)
+
+    def test_warning_cannot_produce_accepted(self) -> None:
+        result = self._result(KALSHI_SPX_SNAPSHOT, POLY_SPX_OFFICIAL_CLOSE)
+        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+
+    def test_existing_hard_rejection_overrides(self) -> None:
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_SPX_SNAPSHOT,
+                determination_time=T0,
+            ),
+            poly_facts(
+                resolution_text=POLY_SPX_OFFICIAL_CLOSE,
+                determination_time=T0 + timedelta(days=1),
+            ),
+        )
+        assert result.hard_failures
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.REJECTED
+
+
+# Verbatim sweep rules fetched 2026-06-11 (docs/VERIFICATION.md §12).
+KALSHI_PROGRESSIVE_SLATE = (
+    "Will the listed Democratic Senate candidates all win their primary elections?\n"
+    "If ALL of the following Democratic candidates win their 2026 Senate primary "
+    "elections: Juliana Stratton in Illinois, Graham Platner in Maine, Mallory "
+    "McMorrow OR Abdul El-Sayed in Michigan, Peggy Flanagan in Minnesota, and "
+    "Ed Markey in Massachusetts, then the market resolves to Yes."
+)
+POLY_INCUMBENT_COHORT = (
+    "Will Democratic Senate incumbents win all their nominating elections in the "
+    "2026 cycle?\n"
+    "This market will resolve according to the number of Democratic Senate "
+    "incumbents who do not win their nominating election to move on to the "
+    "general election as a result of the 2026 midterm primary elections. "
+    "Incumbents who do not officially register as candidates for reelection "
+    "will not be considered."
+)
+
+
+class TestExtractCandidateSlate:
+    def test_extracts_named_groups_with_or_alternatives(self) -> None:
+        slate = extract_candidate_slate(KALSHI_PROGRESSIVE_SLATE)
+        assert len(slate) == 5
+        flattened = {name for group in slate for name in group}
+        assert "juliana stratton" in flattened
+        assert "ed markey" in flattened
+        # The OR clause is one group of two interchangeable alternatives.
+        or_groups = [group for group in slate if len(group) == 2]
+        assert or_groups == [frozenset({"mallory mcmorrow", "abdul el-sayed"})]
+
+    def test_cohort_text_extracts_no_slate(self) -> None:
+        assert extract_candidate_slate(POLY_INCUMBENT_COHORT) == frozenset()
+
+
+class TestCandidateSetConflict:
+    def test_named_slate_vs_incumbent_cohort_is_rejected(self) -> None:
+        message = candidate_set_conflict(KALSHI_PROGRESSIVE_SLATE, POLY_INCUMBENT_COHORT)
+        assert message is not None
+        assert "candidate_set_conflict" in message
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_PROGRESSIVE_SLATE,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_INCUMBENT_COHORT,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert any("candidate_set_conflict" in f for f in result.hard_failures)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+
+    def test_fires_in_either_direction(self) -> None:
+        assert (
+            candidate_set_conflict(POLY_INCUMBENT_COHORT, KALSHI_PROGRESSIVE_SLATE) is not None
+        )
+
+    def test_different_named_slates_are_rejected(self) -> None:
+        other_slate = KALSHI_PROGRESSIVE_SLATE.replace("Juliana Stratton", "Alex Johnson")
+        assert candidate_set_conflict(KALSHI_PROGRESSIVE_SLATE, other_slate) is not None
+
+    def test_identical_slates_are_not_rejected(self) -> None:
+        assert (
+            candidate_set_conflict(KALSHI_PROGRESSIVE_SLATE, KALSHI_PROGRESSIVE_SLATE) is None
+        )
+
+    def test_one_side_missing_slate_without_cohort_is_mismatch_not_rejection(self) -> None:
+        vague_sweep = (
+            "Will the listed Democratic Senate candidates all win their primary "
+            "elections? Resolves Yes if every listed candidate wins."
+        )
+        assert candidate_set_conflict(KALSHI_PROGRESSIVE_SLATE, vague_sweep) is None
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_PROGRESSIVE_SLATE,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=vague_sweep,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert not any("candidate_set_conflict" in f for f in result.hard_failures)
+        assert any("candidate_set_mismatch" in w for w in result.warnings)
+        assert "candidate_set" in result.missing_fields
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_non_sweep_markets_never_fire(self) -> None:
+        single = "Will Alice Johnson win the Michigan Senate primary?"
+        assert candidate_set_conflict(single, POLY_INCUMBENT_COHORT) is None
+
+    def test_mismatch_warning_cannot_produce_accepted(self) -> None:
+        vague_sweep = (
+            "Will the listed candidates all win their primary elections? "
+            "Resolves Yes if every listed candidate wins."
+        )
+        result = validate_rules(
+            kalshi_facts(resolution_text=KALSHI_PROGRESSIVE_SLATE),
+            poly_facts(resolution_text=vague_sweep),
         )
         assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
 

@@ -302,6 +302,13 @@ def test_cli_rejects_packet_with_non_text_format(monkeypatch: pytest.MonkeyPatch
         )
 
 
+def test_cli_routes_check_log(tmp_path: Path) -> None:
+    log = tmp_path / "run.log"
+    log.write_text("candidate funnel: raw_title=10 structured=5 manual_review=1 accepted=0\n")
+    assert main_module.cli(["check-log", "--file", str(log), "--expect", "accepted=0"]) == 0
+    assert main_module.cli(["check-log", "--file", str(log), "--expect", "accepted>=1"]) == 1
+
+
 def test_cli_has_no_execution_command() -> None:
     """The CLI must never grow a trade/execute/order entry point."""
     for forbidden in ("trade", "execute", "order", "buy", "sell"):

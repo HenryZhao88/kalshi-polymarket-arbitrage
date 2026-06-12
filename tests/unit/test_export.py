@@ -147,6 +147,66 @@ class TestPairRecord:
         assert record["polymarket_url"] is None
         assert record["kalshi_void_policy"] is None
 
+    def test_blocking_summary_fields(self) -> None:
+        record = pair_record(make_row())
+        # No hard conflicts and no *_mismatch reasons -> first missing field.
+        assert record["primary_blocker"] == "determination_time"
+        assert record["diagnostic_reasons"] == []
+        assert record["unresolved_fields"] == record["missing_fields"]
+        assert record["next_human_action"] == (
+            "verify determination/settlement timing on both venues"
+        )
+        assert record["evidence_confidence_summary"] == (
+            "type=none/none date=none/none threshold=none/none fee=market_metadata"
+        )
+        with_evidence = make_row(
+            matched_fields={
+                "kalshi_market_type_evidence": {"value": "x", "confidence": "high"},
+                "poly_market_type_evidence": {"value": "x", "confidence": "medium"},
+            }
+        )
+        assert pair_record(with_evidence)["evidence_confidence_summary"].startswith(
+            "type=high/medium"
+        )
+
+    def test_blocking_summary_prefers_diagnostic_mismatch(self) -> None:
+        row = make_row(
+            matched_fields={
+                "status_reasons": [
+                    "source_finalization_mismatch: kalshi=fixed_time_snapshot "
+                    "polymarket=official_close — underlying value is finalized "
+                    "differently on each venue",
+                    "not enough verified evidence to accept",
+                ],
+            }
+        )
+        record = pair_record(row)
+        assert record["primary_blocker"] == "source_finalization_mismatch"
+        assert len(record["diagnostic_reasons"]) == 1
+        assert record["next_human_action"] == (
+            "compare venue source/finalization rules and official close policy"
+        )
+
+    def test_blocking_summary_prefers_hard_conflict_over_everything(self) -> None:
+        row = make_row(
+            differing_fields={"rule_0": "candidate_set_conflict: different slates"}
+        )
+        record = pair_record(row)
+        assert record["primary_blocker"] == "candidate_set_conflict"
+        assert record["next_human_action"] == (
+            "none — pair is rejected by a structured conflict"
+        )
+
+    def test_source_finalization_basis_fields(self) -> None:
+        row = make_row()
+        row.matched_fields["metadata_excerpts"]["kalshi"][
+            "source_finalization_basis"
+        ] = "fixed_time_snapshot"
+        record = pair_record(row)
+        assert record["kalshi_source_finalization_basis"] == "fixed_time_snapshot"
+        assert record["polymarket_source_finalization_basis"] is None
+        assert "finalization=fixed_time_snapshot" in record["rule_evidence_summary"]
+
     def test_cancellation_policy_basis_fields(self) -> None:
         row = make_row()
         row.matched_fields["metadata_excerpts"]["polymarket"][
@@ -306,6 +366,12 @@ class TestVerificationPacket:
         assert text.count(NOT_TRADE_SAFE_LABEL) >= len(records) + 1  # header + rows
         for i in range(3):
             assert f"T-{i}" in text
+
+    def test_packet_contains_blocking_summary(self) -> None:
+        text = "\n".join(render_verification_packet([pair_record(make_row())]))
+        assert "blocking summary:" in text
+        assert "primary blocker: determination_time" in text
+        assert "next action: verify determination/settlement timing" in text
 
     def test_packet_contains_checklist_and_identifiers(self) -> None:
         text = "\n".join(render_verification_packet([pair_record(make_row())]))

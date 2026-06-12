@@ -356,6 +356,7 @@ def _rejection_bucket(reason: str) -> str:
         ("settlement_basis_conflict", ("settlement_basis_conflict",)),
         ("office_level_conflict", ("office_level_conflict",)),
         ("basket_scope_conflict", ("basket_scope_conflict",)),
+        ("candidate_set_conflict", ("candidate_set_conflict",)),
         ("outcome_entity_conflict", ("outcome party",)),
         ("resolution_source_conflict", ("resolution source",)),
         ("void_policy_conflict", ("void policy", "void_policy_conflict")),
@@ -383,12 +384,13 @@ def _primary_rejection_bucket(reasons: tuple[str, ...]) -> str:
         "settlement_basis_conflict": 9,
         "office_level_conflict": 10,
         "basket_scope_conflict": 11,
-        "outcome_entity_conflict": 12,
-        "resolution_source_conflict": 13,
-        "void_policy_conflict": 14,
-        "sports_policy_conflict": 15,
-        "similarity_below_review_threshold": 16,
-        "other_rule_conflict": 17,
+        "candidate_set_conflict": 12,
+        "outcome_entity_conflict": 13,
+        "resolution_source_conflict": 14,
+        "void_policy_conflict": 15,
+        "sports_policy_conflict": 16,
+        "similarity_below_review_threshold": 17,
+        "other_rule_conflict": 18,
     }
     buckets = {_rejection_bucket(reason) for reason in reasons}
     return min(buckets, key=priority.__getitem__)

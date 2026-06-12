@@ -658,6 +658,78 @@ class TestEvaluatePairEndToEnd:
         assert pair.status is MatchStatus.REJECTED
         assert any("void_policy_conflict" in reason for reason in pair.status_reasons)
 
+    def test_spx_snapshot_vs_official_close_surfaces_finalization_mismatch(self) -> None:
+        # The verified KXINXDIRY pair: boundary and date match, but the
+        # underlying is finalized differently. Stays manual_review with the
+        # explicit diagnostic.
+        kalshi = {
+            "ticker": "KXINXDIRY-26DEC31H1600-T8000",
+            "title": "Will the S&P 500 be above 8000 on Dec 31, 2026 at 4pm EST?",
+            "expected_expiration_time": "2026-12-31T21:00:00Z",
+            "rules_primary": (
+                "If the S&P 500 index value on Dec 31, 2026 at 4pm EST is above "
+                "8000, then the market resolves to Yes."
+            ),
+        }
+        poly = {
+            "conditionId": "0x8b13efb0",
+            "question": "Will S&P 500 (SPX) close over $8,000 on the final trading "
+            "day of December 2026?",
+            "clobTokenIds": '["111", "222"]',
+            "description": (
+                "This market will resolve to Yes if the official closing price "
+                "for S&P 500 (SPX) on the final trading day of December 2026 is "
+                "higher than the listed price. The resolution source for this "
+                "market is Yahoo Finance, under Historical Prices."
+            ),
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.MANUAL_REVIEW
+        assert any("source_finalization_mismatch" in reason for reason in pair.status_reasons)
+        assert "source_finalization_basis" in pair.missing_rule_fields
+        excerpts = pair.metadata_excerpts
+        assert excerpts["kalshi"]["source_finalization_basis"] == "fixed_time_snapshot"
+        assert excerpts["polymarket"]["source_finalization_basis"] == "official_close"
+
+    def test_progressive_slate_vs_incumbent_cohort_is_rejected_end_to_end(self) -> None:
+        # The verified KXDEMPROGRESSIVESENATESWEEP pair: fixed named slate vs
+        # registration-dependent incumbent cohort. Provably different sets.
+        kalshi = {
+            "ticker": "KXDEMPROGRESSIVESENATESWEEP-26NOV03",
+            "title": (
+                "Will the listed Democratic Senate candidates all win their "
+                "primary elections?"
+            ),
+            "expected_expiration_time": "2026-11-03T15:00:00Z",
+            "rules_primary": (
+                "If ALL of the following Democratic candidates win their 2026 "
+                "Senate primary elections: Juliana Stratton in Illinois, Graham "
+                "Platner in Maine, Mallory McMorrow OR Abdul El-Sayed in "
+                "Michigan, Peggy Flanagan in Minnesota, and Ed Markey in "
+                "Massachusetts, then the market resolves to Yes."
+            ),
+        }
+        poly = {
+            "conditionId": "0x21ac6c0f",
+            "question": (
+                "Will Democratic Senate incumbents win all their nominating "
+                "elections in the 2026 cycle?"
+            ),
+            "clobTokenIds": '["111", "222"]',
+            "description": (
+                "This market will resolve according to the number of Democratic "
+                "Senate incumbents who do not win their nominating election to "
+                "move on to the general election as a result of the 2026 midterm "
+                "primary elections. Incumbents who do not officially register as "
+                "candidates for reelection will not be considered."
+            ),
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.status is MatchStatus.REJECTED
+        assert any("candidate_set_conflict" in reason for reason in pair.status_reasons)
+
     def test_title_match_but_missing_rules_is_manual_review(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")

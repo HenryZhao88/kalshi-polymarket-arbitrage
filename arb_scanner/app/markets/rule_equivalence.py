@@ -418,6 +418,145 @@ def cancellation_policy_basis(text: str) -> str | None:
     return None
 
 
+# Source/finalization basis extraction, verified 2026-06-11 against
+# KXINXDIRY-26DEC31H1600-T8000 vs Polymarket "close over $8,000 on the final
+# trading day of December 2026" (docs/VERIFICATION.md §11). Kalshi's
+# underlying is a fixed-time index snapshot documented by Kalshi itself with
+# post-expiration revisions ignored; Polymarket resolves on the official
+# (Yahoo-published historical) closing price finalized through UMA. Those
+# usually agree but can diverge near a strike on corrections, auction delays,
+# or halts — a diagnostic-only mismatch, never a hard rejection.
+_SOURCE_FINALIZATION_TERMS: tuple[tuple[str, str], ...] = (
+    ("fixed_time_snapshot", r"\bindex value on\b[^.\n]{0,80}\bat \d{1,2}(?::\d{2})?\s?[ap]m\b"),
+    ("revisions_ignored_after_expiration", r"\brevisions?\b[^.\n]{0,80}\bnot be accounted\b"),
+    ("source_agency_kalshi", r"\bsource agency is kalshi\b"),
+    ("no_data_extension", r"\bmost recently available prior\b"),
+    ("market_outcome_review", r"\bmarket outcome review\b"),
+    ("official_close", r"\bofficial closing price\b"),
+    ("historical_close", r"\bhistorical prices\b|\bclose[\"”']? prices\b"),
+    ("yahoo_finance_close", r"\byahoo finance\b"),
+    ("uma_finalization", r"\buma\b"),
+    ("last_valid_trade", r"\blast valid on-exchange trade\b"),
+)
+_SNAPSHOT_BASIS_FAMILY = frozenset(
+    {
+        "fixed_time_snapshot",
+        "revisions_ignored_after_expiration",
+        "source_agency_kalshi",
+        "no_data_extension",
+    }
+)
+_OFFICIAL_CLOSE_FAMILY = frozenset(
+    {"official_close", "historical_close", "yahoo_finance_close", "last_valid_trade"}
+)
+
+
+def source_finalization_terms(text: str) -> tuple[str, ...]:
+    """Named source/finalization-mechanics terms present in rules text."""
+    return tuple(
+        name
+        for name, pattern in _SOURCE_FINALIZATION_TERMS
+        if re.search(pattern, text, re.IGNORECASE)
+    )
+
+
+def source_finalization_basis(text: str) -> str | None:
+    """Classify rules text as fixed_time_snapshot or official_close basis.
+
+    Returns None when neither family is present or both are: ambiguous text
+    never proves a basis. Wording-only differences (neither family matched)
+    classify as None and produce no diagnostic.
+    """
+    terms = frozenset(source_finalization_terms(text))
+    snapshot = bool(terms & _SNAPSHOT_BASIS_FAMILY)
+    official = bool(terms & _OFFICIAL_CLOSE_FAMILY)
+    if snapshot and not official:
+        return "fixed_time_snapshot"
+    if official and not snapshot:
+        return "official_close"
+    return None
+
+
+# Candidate-slate extraction, verified 2026-06-11 against
+# KXDEMPROGRESSIVESENATESWEEP-26NOV03 vs Polymarket "Will Democratic Senate
+# incumbents win all their nominating elections in the 2026 cycle?"
+# (docs/VERIFICATION.md §12). Kalshi enumerates a FIXED NAMED SLATE
+# ("Juliana Stratton in Illinois, … Mallory McMorrow OR Abdul El-Sayed in
+# Michigan, …"), mostly challengers; Polymarket's set is the INCUMBENT COHORT,
+# membership conditioned on registering for reelection. A fixed slate can
+# never equal a registration-dependent cohort, and a slate member's loss
+# flips one venue without touching the other.
+_PERSON_NAME = r"[A-Z][A-Za-z'.\-]+(?:\s+[A-Z][A-Za-z'.\-]+){1,2}"
+_CANDIDATE_GROUP_RE = re.compile(
+    rf"({_PERSON_NAME})(?:\s+(?:OR|or)\s+({_PERSON_NAME}))?\s+in\s+"
+    r"([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)"
+)
+_ALL_OF_SWEEP_RE = re.compile(
+    r"\ball\b[^.\n]{0,60}\bwin\b|\bwin(?:s)?\s+all\b|\ball of the following\b",
+    re.IGNORECASE,
+)
+_INCUMBENT_COHORT_RE = re.compile(
+    r"\bincumbents?\b[^.\n]{0,120}\b(?:nominat\w+|primar\w+)\b|"
+    r"\b(?:nominat\w+|primar\w+)\b[^.\n]{0,120}\bincumbents?\b",
+    re.IGNORECASE,
+)
+
+
+def extract_candidate_slate(text: str) -> frozenset[frozenset[str]]:
+    """Named candidate groups from a fixed-slate sweep market.
+
+    Each group is a set of interchangeable alternatives ("Mallory McMorrow OR
+    Abdul El-Sayed" is one group). Names are normalized to lowercase. Only the
+    "Name in State" enumeration shape is parsed; anything else extracts
+    nothing rather than guessing.
+    """
+    groups: list[frozenset[str]] = []
+    for match in _CANDIDATE_GROUP_RE.finditer(text):
+        alternatives = frozenset(
+            " ".join(name.lower().split())
+            for name in (match.group(1), match.group(2))
+            if name
+        )
+        groups.append(alternatives)
+    return frozenset(groups)
+
+
+def candidate_set_conflict(kalshi_text: str, poly_text: str) -> str | None:
+    """Detect provably different all-of candidate sets on the two venues.
+
+    Fires when both sides are all-of sweep markets and either (a) both
+    enumerate named slates that differ, or (b) one enumerates a fixed named
+    slate (>= 2 groups) while the other defines its set as the incumbent
+    cohort without naming candidates. One-sided extraction without cohort
+    evidence never fires — callers surface that as candidate_set_mismatch.
+    """
+    if not (_ALL_OF_SWEEP_RE.search(kalshi_text) and _ALL_OF_SWEEP_RE.search(poly_text)):
+        return None
+    kalshi_slate = extract_candidate_slate(kalshi_text)
+    poly_slate = extract_candidate_slate(poly_text)
+    if len(kalshi_slate) >= 2 and len(poly_slate) >= 2:
+        if kalshi_slate != poly_slate:
+            return (
+                "candidate_set_conflict: the venues enumerate different "
+                "candidate slates for their all-of sweep "
+                "(verified 2026-06-11, docs/VERIFICATION.md §12)"
+            )
+        return None
+    for slate, other_text in ((kalshi_slate, poly_text), (poly_slate, kalshi_text)):
+        if (
+            len(slate) >= 2
+            and not extract_candidate_slate(other_text)
+            and _INCUMBENT_COHORT_RE.search(other_text)
+        ):
+            return (
+                "candidate_set_conflict: one venue requires a fixed named "
+                "candidate slate to sweep while the other tracks the "
+                "registration-dependent incumbent cohort "
+                "(verified 2026-06-11, docs/VERIFICATION.md §12)"
+            )
+    return None
+
+
 def void_policy_conflict(kalshi_text: str, poly_text: str) -> str | None:
     """Detect provably incompatible cancellation settlement bases.
 
@@ -531,10 +670,27 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         crypto_performance_vs_price_threshold_conflict,
         stock_close_vs_intramonth_high_conflict,
         void_policy_conflict,
+        candidate_set_conflict,
     ):
         conflict = detect(kalshi_combined, poly_combined)
         if conflict:
             failures.append(conflict)
+    # One side enumerates a named slate but the other side's set is neither a
+    # slate nor a provable cohort: can't prove a conflict, but the sets are
+    # unverified — surface explicitly and stay in manual_review.
+    kalshi_slate = extract_candidate_slate(kalshi_combined)
+    poly_slate = extract_candidate_slate(poly_combined)
+    if (
+        not any("candidate_set_conflict" in failure for failure in failures)
+        and (len(kalshi_slate) >= 2) != (len(poly_slate) >= 2)
+        and _ALL_OF_SWEEP_RE.search(kalshi_combined)
+        and _ALL_OF_SWEEP_RE.search(poly_combined)
+    ):
+        warnings.append(
+            "candidate_set_mismatch: one venue enumerates a named candidate "
+            "slate but the other side's candidate set could not be extracted"
+        )
+        missing.append("candidate_set")
     # One-sided basis extraction can't prove a conflict (e.g. Kalshi's fair-
     # value handling lives in series-level contract terms the scanner never
     # fetches), but it is a stronger signal than "void policy unknown":
@@ -548,6 +704,26 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
             "unverified on one venue"
         )
         missing.append("void_policy_basis")
+
+    # Source/finalization mechanics: a fixed-time snapshot underlying vs an
+    # official/historical close underlying can diverge near a strike on
+    # corrections or halts. Diagnostic only — both bases must be proven and
+    # different; same-basis or ambiguous pairs get no warning. This warning
+    # keeps the pair in manual_review and can never accept (warnings only
+    # tighten decide_status).
+    kalshi_source_basis = source_finalization_basis(kalshi_combined)
+    poly_source_basis = source_finalization_basis(poly_combined)
+    if (
+        kalshi_source_basis is not None
+        and poly_source_basis is not None
+        and kalshi_source_basis != poly_source_basis
+    ):
+        warnings.append(
+            f"source_finalization_mismatch: kalshi={kalshi_source_basis} "
+            f"polymarket={poly_source_basis} — underlying value is finalized "
+            "differently on each venue"
+        )
+        missing.append("source_finalization_basis")
 
     # Void / DNP / postponement handling.
     if kalshi.void_policy is None or poly.void_policy is None:

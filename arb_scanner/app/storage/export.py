@@ -99,7 +99,70 @@ EXPORT_FIELDS: tuple[str, ...] = (
     # Appended after the checklist to honor the append-only header contract.
     "kalshi_cancellation_policy_basis",
     "polymarket_cancellation_policy_basis",
+    "kalshi_source_finalization_basis",
+    "polymarket_source_finalization_basis",
+    "primary_blocker",
+    "diagnostic_reasons",
+    "unresolved_fields",
+    "next_human_action",
+    "evidence_confidence_summary",
 )
+
+#: Human follow-up per primary blocker. Keys are matched by prefix against
+#: the blocker name so e.g. "void_policy_basis" maps to the void action.
+_NEXT_ACTIONS: tuple[tuple[str, str], ...] = (
+    (
+        "source_finalization",
+        "compare venue source/finalization rules and official close policy",
+    ),
+    ("void_policy", "verify cancellation/void handling in both venues' full terms"),
+    ("candidate_set", "compare exact candidate lists and replacement rules"),
+    ("determination_time", "verify determination/settlement timing on both venues"),
+    ("resolution_source", "verify official resolution sources on both venues"),
+    ("event_date", "confirm both venues reference the same event date"),
+    ("resolution_text", "obtain full rule text from both venues"),
+)
+
+
+def _next_human_action(primary_blocker: str, has_conflict: bool) -> str:
+    if has_conflict:
+        return "none — pair is rejected by a structured conflict"
+    for prefix, action in _NEXT_ACTIONS:
+        if primary_blocker.startswith(prefix):
+            return action
+    return "review full rule text on both venues"
+
+
+def _blocker_name(reason: str) -> str:
+    return reason.split(":", 1)[0].strip()
+
+
+def blocking_summary(
+    *,
+    conflicting: list[str],
+    reasons: list[str],
+    missing: list[str],
+) -> dict[str, Any]:
+    """Compact triage block: what blocks this pair and what a human does next.
+
+    Priority: a structured hard conflict, else the first diagnostic
+    *_mismatch reason, else the first unresolved field.
+    """
+    diagnostics = [reason for reason in reasons if "_mismatch" in reason]
+    if conflicting:
+        primary = _blocker_name(conflicting[0])
+    elif diagnostics:
+        primary = _blocker_name(diagnostics[0])
+    elif missing:
+        primary = missing[0]
+    else:
+        primary = "unverified_rule_evidence"
+    return {
+        "primary_blocker": primary,
+        "diagnostic_reasons": diagnostics,
+        "unresolved_fields": list(missing),
+        "next_human_action": _next_human_action(primary, bool(conflicting)),
+    }
 
 
 def polymarket_public_url(event_slug: str | None) -> str | None:
@@ -217,10 +280,12 @@ def _rule_evidence_summary(kalshi: dict[str, Any], poly: dict[str, Any]) -> str:
         f"kalshi: source={kalshi.get('resolution_source') or 'unverified'}, "
         f"void={kalshi.get('void_policy') or 'unknown'}, "
         f"cancellation={kalshi.get('cancellation_policy_basis') or 'unknown'}, "
+        f"finalization={kalshi.get('source_finalization_basis') or 'unknown'}, "
         f"policies={list(kalshi.get('sports_policy_terms') or [])}; "
         f"polymarket: source={poly.get('resolution_source') or 'unverified'}, "
         f"void={poly.get('void_policy') or 'unknown'}, "
         f"cancellation={poly.get('cancellation_policy_basis') or 'unknown'}, "
+        f"finalization={poly.get('source_finalization_basis') or 'unknown'}, "
         f"dispute={list(poly.get('dispute_terms') or [])}"
     )
 
@@ -294,9 +359,59 @@ def pair_record(row: MatchedPairRow) -> dict[str, Any]:
         "unsafe_hypothetical_edge_if_available": hypothetical,
         "kalshi_cancellation_policy_basis": kalshi.get("cancellation_policy_basis"),
         "polymarket_cancellation_policy_basis": poly.get("cancellation_policy_basis"),
+        "kalshi_source_finalization_basis": kalshi.get("source_finalization_basis"),
+        "polymarket_source_finalization_basis": poly.get("source_finalization_basis"),
     }
+    record.update(
+        blocking_summary(
+            conflicting=record["conflicting_fields"],
+            reasons=[str(reason) for reason in reasons],
+            missing=record["missing_fields"],
+        )
+    )
+    record["evidence_confidence_summary"] = _evidence_confidence_summary(details)
     record.update(verification_checklist(record))
     return record
+
+
+def _confidence_of(evidence: Any) -> str:
+    if isinstance(evidence, dict) and evidence.get("confidence"):
+        return str(evidence["confidence"])
+    return "none"
+
+
+def _evidence_confidence_summary(details: dict[str, Any]) -> str:
+    pairs = [
+        ("type", "kalshi_market_type_evidence", "poly_market_type_evidence"),
+        ("date", "kalshi_event_date_evidence", "poly_event_date_evidence"),
+        ("threshold", "kalshi_threshold_evidence", "poly_threshold_evidence"),
+    ]
+    parts = [
+        f"{label}={_confidence_of(details.get(kalshi_key))}/"
+        f"{_confidence_of(details.get(poly_key))}"
+        for label, kalshi_key, poly_key in pairs
+    ]
+    parts.append(f"fee={details.get('fee_confidence') or 'unknown'}")
+    return " ".join(parts)
+
+
+def blocking_summary_lines(record: dict[str, Any]) -> list[str]:
+    """Render the triage block for text reports and verification packets."""
+    label = (
+        NOT_TRADE_SAFE_LABEL if record.get("status") != "accepted" else "accepted"
+    )
+    return [
+        "  blocking summary:",
+        f"    status: {label}",
+        f"    primary blocker: {record.get('primary_blocker')}",
+        (
+            "    diagnostic mismatches: "
+            + ("; ".join(record.get("diagnostic_reasons") or []) or "none")
+        ),
+        f"    unresolved: {', '.join(record.get('unresolved_fields') or []) or 'none'}",
+        f"    evidence confidence: {record.get('evidence_confidence_summary')}",
+        f"    next action: {record.get('next_human_action')}",
+    ]
 
 
 def _csv_cell(value: Any) -> str:
@@ -361,6 +476,7 @@ def render_verification_packet(records: list[dict[str, Any]]) -> list[str]:
                 ),
                 f"  Kalshi title:     {record.get('kalshi_title')}",
                 f"  Polymarket title: {record.get('polymarket_title')}",
+                *blocking_summary_lines(record),
                 (
                     "  why it matched: market types "
                     f"Kalshi={record.get('kalshi_market_type')} / "

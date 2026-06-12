@@ -210,6 +210,18 @@ def cli(argv: list[str] | None = None) -> int:
     )
     replay = sub.add_parser("replay", help="re-evaluate stored paired opportunity snapshots")
     replay.add_argument("--database-url", default=None)
+    check_log = sub.add_parser(
+        "check-log",
+        help="assert detector expectations against a saved dry-run log (no network)",
+    )
+    check_log.add_argument("--file", required=True, help="saved dry-run log or text report")
+    check_log.add_argument(
+        "--expect",
+        action="append",
+        default=[],
+        metavar="NAME{=,>=,<=,>,<}INT",
+        help="expectation, e.g. accepted=0 or continent_scope_conflict>=1 (repeatable)",
+    )
     report = sub.add_parser(
         "report", help="render persisted candidate diagnostics or replay metrics"
     )
@@ -277,6 +289,10 @@ def cli(argv: list[str] | None = None) -> int:
     if args.command == "scan":
         asyncio.run(_scan_loop(settings, args.interval))
         return 0
+    if args.command == "check-log":
+        from arb_scanner.app.diagnostics import run_check_log
+
+        return run_check_log(args.file, args.expect)
     if args.command == "report" and args.cleanup_retention:
         from arb_scanner.app.storage.reporting import run_retention_cleanup
 

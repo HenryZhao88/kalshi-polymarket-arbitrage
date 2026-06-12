@@ -108,6 +108,20 @@ _CRYPTO_MONTHLY_RE = re.compile(
     r"\bmonthly candle\b|\bmonthly performance\b|\bworst month\b",
     re.I,
 )
+# Continent-level World Cup winner contracts are a different bet from a
+# country-level winner contract: typing them distinctly makes the pairing
+# evidence explicit.
+_WC_CONTINENT_WINNER_RE = re.compile(r"\bworld cup\b", re.I)
+_CONTINENT_NAME_RE = re.compile(
+    r"\bsouth\s+america\b|\bnorth\s+america\b|\beurope\b|\bafrica\b|\basia\b|\boceania\b",
+    re.I,
+)
+# All-of candidate sweep contracts: a named slate or cohort must all win
+# their primaries/nominating races. Never the same bet as a single race.
+_CANDIDATE_SWEEP_RE = re.compile(
+    r"\ball\b[^.\n]{0,60}\bwin\b|\bwin(?:s)?\s+all\b|\ball of the following\b", re.I
+)
+_CANDIDATE_COHORT_RE = re.compile(r"\b(?:candidates?|incumbents?)\b", re.I)
 
 
 # Single source of truth for US state names (lowercase) and their postal
@@ -152,10 +166,12 @@ class MarketType(StrEnum):
     EXACT_VOTE_SHARE = "exact_vote_share"
     TURNOUT = "turnout"
     OFFICE_HOLDER = "office_holder_confirmation_appointment"
+    ELECTION_CANDIDATE_SWEEP = "election_candidate_sweep"
     SPORTS_MONEYLINE = "sports_moneyline"
     SPORTS_SPREAD = "sports_spread"
     SPORTS_TOTAL = "sports_total"
     SPORTS_STAGE_COUNT = "sports_stage_count"
+    SPORTS_WC_CONTINENT_WINNER = "sports_world_cup_continent_winner"
     CRYPTO_PRICE_THRESHOLD = "crypto_price_threshold"
     CRYPTO_EXACT_PRICE = "crypto_exact_price"
     CRYPTO_MONTHLY_PERFORMANCE = "crypto_monthly_performance"
@@ -278,6 +294,12 @@ def infer_market_type(
         value = MarketType.PRIMARY_PLACEMENT
     elif re.search(r"\b(nominee|nomination|primary winner)\b", lowered):
         value = MarketType.PARTY_NOMINEE
+    elif (
+        _CANDIDATE_SWEEP_RE.search(lowered)
+        and _CANDIDATE_COHORT_RE.search(lowered)
+        and re.search(r"\b(primar\w+|nominat\w+|election\w*)\b", lowered)
+    ):
+        value = MarketType.ELECTION_CANDIDATE_SWEEP
     elif re.search(r"\b(control|majority)\b", lowered) and re.search(
         r"\b(senate|house|congress|legislature|party)\b", lowered
     ):
@@ -297,6 +319,12 @@ def infer_market_type(
         value = MarketType.OFFICE_HOLDER
     elif is_sports and _STAGE_COUNT_RE.search(lowered) and _TEAM_COUNT_RE.search(lowered):
         value = MarketType.SPORTS_STAGE_COUNT
+    elif (
+        _WC_CONTINENT_WINNER_RE.search(lowered)
+        and _CONTINENT_NAME_RE.search(lowered)
+        and re.search(r"\b(win|wins|winner)\b", lowered)
+    ):
+        value = MarketType.SPORTS_WC_CONTINENT_WINNER
     elif is_sports and re.search(r"\b(spread|cover|handicap|win by)\b", lowered):
         value = MarketType.SPORTS_SPREAD
     elif (

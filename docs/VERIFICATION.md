@@ -550,3 +550,93 @@ The bases are persisted in metadata excerpts and exported
 appended after the checklist columns to keep CSV headers append-only) and
 appear in the rule-evidence summary used by text reports and verification
 packets.
+
+## 11. S&P 500 final-day close pair: source/finalization divergence (2026-06-11)
+
+Manual verification of KXINXDIRY-26DEC31H1600-T8000 vs Polymarket condition
+`0x8b13efb0…` ("Will S&P 500 (SPX) close over $8,000 on the final trading day
+of December 2026?"). Sources fetched 2026-06-11:
+
+- https://api.elections.kalshi.com/trade-api/v2/markets/KXINXDIRY-26DEC31H1600-T8000
+- https://api.elections.kalshi.com/trade-api/v2/series/KXINXDIRY
+- https://kalshi-public-docs.s3.amazonaws.com/contract_terms/INXDIR.pdf
+- https://gamma-api.polymarket.com/markets?condition_ids=0x8b13efb0…
+
+**Verdict: probably the same event, but NOT TRADE SAFE.** This is not an
+arbitrage or profit claim. The boundary matches exactly (Kalshi
+`floor_strike=8000.0001` greater-or-equal ≡ Polymarket "higher than $8,000";
+exactly 8000.00 pays No on both) and the date matches in the expected
+calendar (Dec 31, 2026 is a Thursday and the final scheduled NYSE trading day
+of December). The blocker is source/finalization mechanics: Kalshi's
+underlying is the **4:00 PM ET index snapshot** documented by Kalshi itself
+("The Source Agency is Kalshi"; settlement source "For example, Google
+Finance"; *"Revisions to the Underlying made after Expiration will not be
+accounted for"*; no-data fallback to the most recent prior value), while
+Polymarket resolves on the **official closing price** per Yahoo Finance
+Historical Prices through UMA, with a last-valid-trade fallback. A correction
+or auction finalization landing after Kalshi's ~4:01 PM expiration can
+diverge near the strike.
+
+Encoded as a **diagnostic-only** mismatch (never a rejection, never an
+acceptance): `source_finalization_terms` / `source_finalization_basis`
+classify rules text as `fixed_time_snapshot` (index-value-at-time, revisions
+ignored, Kalshi source agency, no-data fallback) or `official_close`
+(official closing price, historical/Yahoo close, last valid trade). When both
+sides prove a basis and they differ, validate_rules adds a
+`source_finalization_mismatch` warning and a `source_finalization_basis`
+blocking field, keeping the pair manual_review. Same-basis or ambiguous pairs
+get no warning; wording-only differences never classify.
+
+## 12. Democratic Senate sweep pair: candidate-set conflict (2026-06-11)
+
+Manual verification of KXDEMPROGRESSIVESENATESWEEP-26NOV03 vs Polymarket
+condition `0x21ac6c0f…` ("Will Democratic Senate incumbents win all their
+nominating elections in the 2026 cycle?"). Sources fetched 2026-06-11:
+
+- https://api.elections.kalshi.com/trade-api/v2/markets/KXDEMPROGRESSIVESENATESWEEP-26NOV03
+- https://gamma-api.polymarket.com/markets?condition_ids=0x21ac6c0f…
+
+**Verdict: NOT EQUIVALENT.** Kalshi requires a **fixed named slate** to sweep
+their primaries — *"Juliana Stratton in Illinois, Graham Platner in Maine,
+Mallory McMorrow OR Abdul El-Sayed in Michigan, Peggy Flanagan in Minnesota,
+and Ed Markey in Massachusetts"* — mostly challengers/non-incumbents.
+Polymarket tracks the **incumbent cohort**: all Democratic Senate incumbents'
+nominating elections (party, top-two/jungle, and special primaries, March 1 –
+September 30, 2026), with membership conditioned on registration
+(*"Incumbents who do not officially register as candidates for reelection
+will not be considered"*) and withdrawal counting as a loss. A fixed slate
+can never equal a registration-dependent cohort, and a slate member's primary
+loss (e.g. Stratton) flips Kalshi to No without touching Polymarket.
+
+Encoded as `candidate_set_conflict`, a hard rejection that fires only when
+both sides are all-of sweep markets and either (a) both enumerate named
+slates that differ (OR-alternatives like "McMorrow OR El-Sayed" are parsed as
+one interchangeable group), or (b) one side enumerates a named slate of at
+least two groups while the other defines its set as the incumbent cohort
+without naming candidates. One-sided extraction without cohort evidence
+produces a `candidate_set_mismatch` warning (manual_review) instead.
+
+## 13. Live-regression gate for detectors
+
+The 2026-06-11 audit found a detector with green unit tests that never fired
+live. Tests alone are not sufficient evidence that a detector works: every
+detector whose target was observed in a live scan must also be asserted
+against a saved dry-run log. Workflow:
+
+```bash
+ARB_DRY_RUN_SEND_ALERTS=false uv run arb-scanner dry-run … | tee /tmp/dryrun.log
+uv run arb-scanner check-log --file /tmp/dryrun.log \
+  --expect accepted=0 \
+  --expect manual_review<=10 \
+  --expect continent_scope_conflict>=1 \
+  --expect source_finalization_mismatch>=1
+```
+
+`check-log` reads only the local file (no network, no execution capability).
+Expectation names resolve against the candidate-funnel counters, then the
+rejection-histogram buckets (a bucket absent from a present histogram counts
+as 0, so dead detectors fail loudly), then fall back to counting occurrences
+in the log — which is how diagnostic warnings like
+`source_finalization_mismatch` and `void_policy_mismatch` are checked, since
+they never appear in the rejection histogram. Exit code 0 only when every
+expectation passes.

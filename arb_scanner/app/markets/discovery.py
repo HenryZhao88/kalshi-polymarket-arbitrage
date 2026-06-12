@@ -26,6 +26,8 @@ from arb_scanner.app.markets.rule_equivalence import (
     cancellation_policy_basis,
     cancellation_policy_terms,
     decide_status,
+    source_finalization_basis,
+    source_finalization_terms,
     validate_rules,
 )
 from arb_scanner.app.markets.tickers import TickerInference, parse_kalshi_ticker
@@ -344,6 +346,8 @@ def _kalshi_excerpt(
         "fifty_fifty_policy": "50-50" if "50-50" in void_terms else None,
         "cancellation_policy_terms": list(cancellation_policy_terms(rules_text)),
         "cancellation_policy_basis": cancellation_policy_basis(rules_text),
+        "source_finalization_terms": list(source_finalization_terms(f"{title}\n{rules_text}")),
+        "source_finalization_basis": source_finalization_basis(f"{title}\n{rules_text}"),
         "sports_policy_terms": list(sports_terms),
         "dispute_terms": list(_policy_terms(rules_text, _DISPUTE_TERMS)),
         "market_type_evidence": _evidence(features.market_type_evidence),
@@ -383,6 +387,12 @@ def _rule_facts(
             "fifty_fifty_policy": "50-50" if "50-50" in poly_void_terms else None,
             "cancellation_policy_terms": list(cancellation_policy_terms(poly.description)),
             "cancellation_policy_basis": cancellation_policy_basis(poly.description),
+            "source_finalization_terms": list(
+                source_finalization_terms(f"{poly.question}\n{poly.description}")
+            ),
+            "source_finalization_basis": source_finalization_basis(
+                f"{poly.question}\n{poly.description}"
+            ),
             "sports_policy_terms": list(poly_sports_terms),
             "dispute_terms": list(_policy_terms(poly.description, _DISPUTE_TERMS)),
             "market_type_evidence": _evidence(poly_features.market_type_evidence),

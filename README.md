@@ -165,6 +165,27 @@ unresolved fields blocking acceptance, venue identifiers/URLs, rule-text
 excerpts, and an unchecked verification checklist. It is for manual research
 only and is never a trade recommendation.
 
+### Live-regression gate
+
+Unit tests cannot prove a detector fires on real venue data. After any
+detector change, run a dry-run, save the log, and assert expectations:
+
+```bash
+uv run arb-scanner check-log --file /tmp/dryrun.log --expect accepted=0 --expect "continent_scope_conflict>=1"
+```
+
+Names resolve against funnel counters, then histogram buckets (absent buckets
+count as 0), then raw occurrences in the log (for diagnostic warnings such as
+`source_finalization_mismatch`). Nonzero exit on any failed expectation. The
+command reads only the local file — no network. See `docs/VERIFICATION.md`
+§13.
+
+Manual-review rows in reports and verification packets start with a
+`blocking summary` (primary blocker, diagnostic mismatches, unresolved
+fields, evidence confidence, next human action); the same fields are exported
+to CSV/JSON as `primary_blocker`, `diagnostic_reasons`, `unresolved_fields`,
+`next_human_action`, and `evidence_confidence_summary`.
+
 ### Storage growth and retention
 
 Persisting every raw candidate would grow the database quickly, so raw

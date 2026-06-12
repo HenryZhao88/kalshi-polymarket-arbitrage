@@ -129,6 +129,33 @@ class TestParseFeatures:
                 None,
                 MarketType.CRYPTO_PRICE_THRESHOLD,
             ),
+            (
+                "Will South America (CONMEBOL) win the 2026 Men's World Cup?",
+                None,
+                MarketType.SPORTS_WC_CONTINENT_WINNER,
+            ),
+            (
+                "Will the winner of the 2026 Men's FIFA World Cup be from any "
+                "continent other than Europe or South America?",
+                None,
+                MarketType.SPORTS_WC_CONTINENT_WINNER,
+            ),
+            # Country-level winner stays moneyline (different bet from continent).
+            ("Will Brazil win the 2026 World Cup?", "sports", MarketType.SPORTS_MONEYLINE),
+            (
+                "Will the listed Democratic Senate candidates all win their "
+                "primary elections?",
+                None,
+                MarketType.ELECTION_CANDIDATE_SWEEP,
+            ),
+            (
+                "Will Democratic Senate incumbents win all their nominating "
+                "elections in the 2026 cycle?",
+                None,
+                MarketType.ELECTION_CANDIDATE_SWEEP,
+            ),
+            # Single race winner is never a sweep.
+            ("Will Alice win the Senate race?", None, MarketType.SENATE_WINNER),
         ],
     )
     def test_market_type_taxonomy(
