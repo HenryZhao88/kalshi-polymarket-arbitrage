@@ -33,6 +33,13 @@ class AlertPayload:
     #: price-dislocation lead on a likely-equivalent pair, never a guaranteed
     #: profit — these flags say what to check.
     risk_flags: tuple[str, ...] = ()
+    #: Automated-verifier verdict on the risk flags: "verified" (no human action
+    #: needed), "needs_human" (check `unresolved_flags`), or None when the
+    #: verifier did not run. A "rejected" verdict suppresses the alert entirely.
+    verification_verdict: str | None = None
+    #: The subset of risk flags the verifier could not auto-clear — the only
+    #: ones a human still needs to check.
+    unresolved_flags: tuple[str, ...] = ()
 
     def render_text(self) -> str:
         other_fees = (
@@ -60,7 +67,12 @@ class AlertPayload:
             ),
             f"snapshot #{self.snapshot_id}" if self.snapshot_id is not None else "no snapshot",
         ]
-        if self.risk_flags:
+        if self.verification_verdict is not None:
+            lines.append(f"AUTO-VERIFIED: {self.verification_verdict}")
+            if self.unresolved_flags:
+                lines.append(f"  human must check ({len(self.unresolved_flags)}):")
+                lines.extend(f"    - {flag}" for flag in self.unresolved_flags)
+        elif self.risk_flags:
             lines.append(f"VERIFY before trading ({len(self.risk_flags)}):")
             lines.extend(f"  - {flag}" for flag in self.risk_flags)
         return "\n".join(lines)
@@ -89,6 +101,8 @@ class AlertPayload:
             "unknown_cost_buffer_dollars": str(self.fees.unknown_cost_buffer.to_dollars()),
             "snapshot_id": self.snapshot_id,
             "risk_flags": list(self.risk_flags),
+            "verification_verdict": self.verification_verdict,
+            "unresolved_flags": list(self.unresolved_flags),
         }
 
 

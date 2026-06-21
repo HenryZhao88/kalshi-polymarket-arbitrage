@@ -106,6 +106,37 @@ class TestRenderText:
     def test_no_risk_flags_renders_cleanly(self) -> None:
         assert PAYLOAD.to_dict()["risk_flags"] == []
 
+    def test_verification_verdict_is_rendered_and_persisted(self) -> None:
+        verified = AlertPayload(
+            kalshi_ticker="KXBTCD-26JUN30-T70000",
+            poly_condition_id="0xabcdef1234567890",
+            direction="kalshi_yes_poly_no",
+            confidence=0.93,
+            size=100,
+            depth_summary="k_levels=1 p_levels=1",
+            fees=FeeBreakdown(),
+            net_edge=Money.from_dollars("6.25"),
+            simple_return=D("0.067"),
+            annualized_return=D("0.81"),
+            break_even_slippage_per_share=D("0.0625"),
+            break_even_extra_fees=Money.from_dollars("6.25"),
+            snapshot_id=42,
+            risk_flags=("UMA challenge window: ...",),
+            verification_verdict="needs_human",
+            unresolved_flags=("void policy unknown on at least one venue",),
+        )
+        text = verified.render_text()
+        assert "AUTO-VERIFIED: needs_human" in text
+        assert "void policy unknown" in text
+        persisted = verified.to_dict()
+        assert persisted["verification_verdict"] == "needs_human"
+        assert persisted["unresolved_flags"] == ["void policy unknown on at least one venue"]
+
+    def test_default_payload_has_no_verdict(self) -> None:
+        persisted = PAYLOAD.to_dict()
+        assert persisted["verification_verdict"] is None
+        assert persisted["unresolved_flags"] == []
+
 
 class TestDiscordSink:
     async def test_posts_to_webhook(self, aiohttp_client: AiohttpClientFn) -> None:

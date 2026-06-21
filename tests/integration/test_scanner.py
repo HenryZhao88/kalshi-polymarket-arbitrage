@@ -291,6 +291,37 @@ class TestScanOnce:
         # The emitted alert carries the settlement caveats to verify (at least
         # the ever-present UMA challenge window on a Polymarket-resolved pair).
         assert any("UMA challenge window" in flag for flag in sink.sent[0].risk_flags)
+        # The fully-matching fixture (same Coindesk source, same determination)
+        # auto-verifies: UMA is acknowledged, nothing left for a human.
+        assert sink.sent[0].verification_verdict == "verified"
+        assert sink.sent[0].unresolved_flags == ()
+
+    async def test_verifier_suppresses_proven_source_divergence(self) -> None:
+        # Kalshi settles from Coindesk, this Polymarket market from Binance —
+        # different price sources can disagree near the strike, so the verifier
+        # rejects the pair and the alert is auto-suppressed (recorded, not sent).
+        market = {
+            **POLY_MARKET,
+            "description": "Settles from the Binance BTC price index.",
+            "resolutionSource": "binance btc price",
+        }
+        sink = CapturingSink()
+        report = await scan_once(
+            kalshi=StubKalshi(),
+            gamma=StubGamma(market),
+            clob=StubClob(),
+            sinks=[sink],
+            limits=permissive_limits(),
+            cost_assumptions=known_costs(),
+            now=NOW,
+        )
+        assert sink.sent == []
+        assert any(
+            "verifier" in reason.lower()
+            for _, _, reasons in report.opportunities
+            for reason in reasons
+        )
+        assert report.verification_verdicts["rejected"] >= 1
 
     async def test_market_fee_metadata_is_used_in_economics(self) -> None:
         report = await scan_once(

@@ -42,6 +42,7 @@ from arb_scanner.app.risk.controls import OpportunityRisk, RiskLimits, check
 from arb_scanner.app.risk.exposure import ExposureTracker
 from arb_scanner.app.risk.kill_switch import KillSwitch
 from arb_scanner.app.types import OrderBook, Side, Venue
+from arb_scanner.app.markets.verification import verify_pair, VerificationInputs
 
 log = logging.getLogger("arb_scanner.scanner")
 
@@ -113,6 +114,7 @@ class ScanReport:
     rejected_candidates: int = 0
     pairs_considered: int = 0
     pairs_accepted: int = 0
+    verification_verdicts: Counter[str] = field(default_factory=Counter)
     rejection_reasons: Counter[str] = field(default_factory=Counter)
     manual_review_pairs: list[MatchedPair] = field(default_factory=list)
     rejected_pairs: list[MatchedPair] = field(default_factory=list)
@@ -136,6 +138,11 @@ class ScanReport:
                 f"accepted={self.pairs_accepted} rejected={self.rejected_candidates}"
             ),
         ]
+        if self.verification_verdicts:
+            verdict_summary = ", ".join(
+                f"{verdict}={count}" for verdict, count in self.verification_verdicts.most_common()
+            )
+            lines.append(f"verification: {verdict_summary}")
         if self.rejection_reasons:
             reason_summary = ", ".join(
                 f"{reason}={count}" for reason, count in self.rejection_reasons.most_common()
@@ -609,29 +616,84 @@ async def scan_once(
                 report.opportunities.append((pair, evaluation, reasons))
 
                 payload: AlertPayload | None = None
+                verification_verdict: str | None = None
+                unresolved_flags: tuple[str, ...] = ()
                 if not reasons:
-                    payload = AlertPayload(
-                        kalshi_ticker=pair.kalshi_ticker,
-                        poly_condition_id=pair.poly_condition_id,
-                        direction=evaluation.direction.value,
-                        confidence=pair.confidence,
-                        size=evaluation.executable_size,
-                        depth_summary=(
-                            f"requested={evaluation.requested_size} "
-                            f"executable={evaluation.executable_size} "
-                            f"fill={evaluation.fill_fraction:.2%} "
-                            f"k_levels={evaluation.kalshi_leg.levels_consumed} "
-                            f"p_levels={evaluation.poly_leg.levels_consumed}"
-                        ),
-                        fees=evaluation.fees,
-                        net_edge=evaluation.net,
-                        simple_return=evaluation.simple_return,
-                        annualized_return=evaluation.annualized_return,
-                        break_even_slippage_per_share=evaluation.break_even_slippage_per_share,
-                        break_even_extra_fees=evaluation.break_even_extra_fees,
-                        snapshot_id=snapshot_ids.get("kalshi_yes"),
-                        risk_flags=pair.rule_warnings,
+                    # Verify risk flags using the automated verifier
+                    kalshi_excerpt = pair.metadata_excerpts["kalshi"]
+                    poly_excerpt = pair.metadata_excerpts["polymarket"]
+
+                    # Parse determination times from ISO strings
+                    kalshi_time = None
+                    if kalshi_excerpt.get("determination_time"):
+                        try:
+                            kalshi_time = datetime.fromisoformat(
+                                kalshi_excerpt["determination_time"].replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            pass
+
+                    poly_time = None
+                    poly_resolution_time = poly_excerpt.get("resolution_time")
+                    poly_end_time = poly_excerpt.get("end_time")
+                    if poly_resolution_time:
+                        try:
+                            poly_time = datetime.fromisoformat(
+                                poly_resolution_time.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            pass
+                    elif poly_end_time:
+                        try:
+                            poly_time = datetime.fromisoformat(
+                                poly_end_time.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            pass
+
+                    inputs = VerificationInputs(
+                        kalshi_rules_text=kalshi_excerpt.get("rules_text", ""),
+                        poly_rules_text=poly_excerpt.get("description", ""),
+                        kalshi_determination_time=kalshi_time,
+                        poly_determination_time=poly_time,
                     )
+
+                    verification_report = verify_pair(pair.rule_warnings, inputs)
+                    verification_verdict = verification_report.verdict.value
+                    unresolved_flags = verification_report.unresolved()
+
+                    # Update verification statistics
+                    report.verification_verdicts[verification_verdict] += 1
+
+                    # If verifier rejects the pair, don't create an alert
+                    if verification_verdict == VerificationVerdict.REJECTED.value:
+                        reasons.append("verifier rejected: normal-state divergence proven")
+                        payload = None
+                    else:
+                        payload = AlertPayload(
+                            kalshi_ticker=pair.kalshi_ticker,
+                            poly_condition_id=pair.poly_condition_id,
+                            direction=evaluation.direction.value,
+                            confidence=pair.confidence,
+                            size=evaluation.executable_size,
+                            depth_summary=(
+                                f"requested={evaluation.requested_size} "
+                                f"executable={evaluation.executable_size} "
+                                f"fill={evaluation.fill_fraction:.2%} "
+                                f"k_levels={evaluation.kalshi_leg.levels_consumed} "
+                                f"p_levels={evaluation.poly_leg.levels_consumed}"
+                            ),
+                            fees=evaluation.fees,
+                            net_edge=evaluation.net,
+                            simple_return=evaluation.simple_return,
+                            annualized_return=evaluation.annualized_return,
+                            break_even_slippage_per_share=evaluation.break_even_slippage_per_share,
+                            break_even_extra_fees=evaluation.break_even_extra_fees,
+                            snapshot_id=snapshot_ids.get("kalshi_yes"),
+                            risk_flags=pair.rule_warnings,
+                            verification_verdict=verification_verdict,
+                            unresolved_flags=unresolved_flags,
+                        )
 
                 assumptions: dict[str, Any] = {
                     "requested_size": evaluation.requested_size,
@@ -645,6 +707,8 @@ async def scan_once(
                     "missing_costs": list(missing_costs),
                     "kalshi_fee_source": "general_schedule_conservative",
                     "risk_flags": list(pair.rule_warnings),
+                    "verification_verdict": verification_verdict,
+                    "unresolved_flags": list(unresolved_flags),
                     "alert_payload": payload.to_dict() if payload is not None else None,
                 }
                 if store is not None:
