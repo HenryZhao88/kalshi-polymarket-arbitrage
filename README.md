@@ -32,10 +32,27 @@ Implemented and tested:
 - Paired-snapshot economics replay. It does not claim realized P&L or historical fills.
 - Discord, Telegram, and email sinks. Dry-run is console-only unless explicitly enabled.
 
+Acceptance model (same-event + risk flags, operator decision 2026-06-21 —
+see `docs/VERIFICATION.md` §18):
+
+- A pair is `accepted` (and its economics evaluated) when similarity is high and
+  no *different-event* conflict fires. Unverifiable or divergent *settlement
+  mechanics* — resolution source, void policy, UMA challenge window, close-
+  timestamp differences within a week — ride along as `risk_flags` on the
+  opportunity and every alert ("VERIFY before trading"), rather than silently
+  blocking it. An alert is a price-dislocation lead on a likely-equivalent pair
+  to verify, never a guaranteed-profit claim, and the scanner never trades.
+- Different-event conflicts (continent/office/basket/settlement-basis, contract
+  shapes, candidate sets, player props, central-bank direction) and materially
+  different determination horizons (>7 days) still hard-reject. A numeric
+  line/strike present on only one venue caps a pair at `manual_review` (the line
+  is the market's identity, not a tail risk).
+- Two accuracy guards suppress false matches by their economic/structural
+  signature: an implausible gross edge per share (`max_plausible_edge_per_share`,
+  default `$0.15`) does not alert, and one-sided line markets are not accepted.
+
 Incomplete or not live-wired:
 
-- Market matching is heuristic. Missing void, determination, source, or resolution text
-  produces `manual_review`, not an accepted pair.
 - Text/rules parsing is pattern-based, not a complete legal interpretation of either
   venue's contract. Ticker inference is never sufficient acceptance evidence.
 - Kalshi per-series fee overrides are implemented in isolation but not applied by the
@@ -43,8 +60,10 @@ Incomplete or not live-wired:
 - Bridge quotes and withdrawal, gas, processor, and conversion costs are not fetched by
   the scan loop. They must be configured or candidates are rejected by default.
 - Exposure survives a continuous scan process but is not restored after process restart.
-- Gamma pagination is bounded by configured page and market limits. It does not
-  guarantee that every active Polymarket market is fetched in one pass.
+- Discovery defaults to full-venue coverage: the Kalshi REST and Gamma keyset
+  loops page the entire active universe and stop gracefully when a venue is
+  exhausted. The high page/market caps (`ARB_POLYMARKET_MAX_*`, `ARB_KALSHI_*`)
+  are safety guardrails — lower them to sample a slice and cut scan time.
 - Replay re-evaluates paired snapshots; it does not model later two-leg fills or realized
   outcomes because the scanner does not yet record a time series for each opportunity.
 - No live order placement exists.
@@ -89,9 +108,11 @@ All variables use the `ARB_` prefix. See `.env.example` for the complete list.
 | `ARB_PERSIST_RAW_CANDIDATES` | `false` | Persist conflict-free low-similarity raw pairs. |
 | `ARB_STORAGE_RETENTION_DAYS` | `30` | Remove older persisted pairs, books, and evaluations. |
 | `ARB_STORAGE_MAX_CANDIDATES_PER_SCAN` | `5000` | Cap persisted rejected candidates; manual/accepted rows are retained. |
-| `ARB_POLYMARKET_MAX_MARKETS` | `500` | Maximum unique Gamma markets per scan. |
+| `ARB_POLYMARKET_MAX_MARKETS` | `50000` | Guardrail cap on unique Gamma markets per scan (full coverage by default). |
 | `ARB_POLYMARKET_PAGE_SIZE` | `100` | Gamma keyset rows per request; maximum 100. |
-| `ARB_POLYMARKET_MAX_PAGES` | `5` | Maximum Gamma pages per scan. |
+| `ARB_POLYMARKET_MAX_PAGES` | `500` | Guardrail cap on Gamma pages per scan. |
+| `ARB_KALSHI_PAGE_LIMIT` | `1000` | Kalshi markets per REST page. |
+| `ARB_KALSHI_MAX_PAGES` | `200` | Guardrail cap on Kalshi REST pages per scan. |
 | `ARB_KILL_SWITCH_FILE` | `.arb-scanner.kill` | Existing file blocks alerts. |
 | `ARB_DRY_RUN_SEND_ALERTS` | `false` | Permit configured external sinks during dry-run. |
 | `ARB_ALLOW_UNKNOWN_FEES` | `false` | Allow unverified category/unknown fee metadata. |
@@ -199,16 +220,18 @@ rows persist within those bounds. To prune on demand:
 uv run arb-scanner report --cleanup-retention
 ```
 
-Only `accepted` means the implemented rule checks found affirmative equivalence.
-`manual_review` means required facts are missing and is **NOT TRADE SAFE**: the
-pair is plausibly the same event, but determination time, resolution source,
-void policy, or other rule facts are unverified, so it is a research lead — not
-a profitable arbitrage claim. `rejected` means known facts conflict or
-similarity is insufficient. A displayed hypothetical edge is diagnostic only;
-it is not arbitrage, executable economics, or a profit claim. An `accepted=0`
-result is valid fail-closed behavior when no candidate has enough affirmative
-rule evidence — it is the correct and safe outcome, not a defect. More matches
-are not preferable to unsafe matches.
+`accepted` means similarity is high and no different-event conflict fired, so the
+pair's economics are evaluated; any unverified settlement mechanics travel with
+it as `risk_flags` to clear before trading. An accepted pair and its alert are a
+price-dislocation **lead on a likely-equivalent pair — NOT a guaranteed-profit
+claim**, and the scanner never trades. `manual_review` means the pair is a
+plausible same-event lead held back from economics (mid-band similarity, or a
+one-sided line/strike that cannot confirm the shared line) and is **NOT TRADE
+SAFE**. `rejected` means known facts conflict (different event) or similarity is
+insufficient. A displayed hypothetical edge is diagnostic only. An implausibly
+large edge does not alert — it is treated as evidence of a false (non-equivalent)
+match, not a profit. Always clear every risk flag against the live venue rules
+before treating an alert as an opportunity.
 
 `replay` and `report` require complete paired snapshots produced by a persisted scan.
 Legacy isolated order-book rows fail with an actionable message.

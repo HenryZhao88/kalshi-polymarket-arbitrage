@@ -319,7 +319,11 @@ class TestEvaluatePairEndToEnd:
         assert pair.confidence >= 0.7
         assert pair.poly_yes_token_id == "111"
 
-    def test_trap_different_end_dates_rejected(self) -> None:
+    def test_trap_close_end_dates_accept_with_timing_risk_flag(self) -> None:
+        # Same title and threshold, end timestamps one day apart: a settlement
+        # timing risk flag (same event, buffer day), not a rejection. A
+        # materially larger horizon gap (>7d) is covered by
+        # test_trap_material_end_date_gap_rejected.
         kalshi_market = {
             "ticker": "K1",
             "title": "Bitcoin above $70,000 on June 30?",
@@ -329,7 +333,26 @@ class TestEvaluatePairEndToEnd:
         poly_market = {
             "conditionId": "0xabc",
             "question": "Bitcoin above $70,000 on June 30?",
-            "endDate": "2026-07-01T16:00:00Z",  # same title, different determination
+            "endDate": "2026-07-01T16:00:00Z",  # same title, 1-day timing gap
+            "clobTokenIds": '["111", "222"]',
+        }
+        pair = evaluate_pair(kalshi_market, poly_market)
+        assert pair is not None
+        assert pair.status is MatchStatus.ACCEPTED
+        assert any("determination time differs" in flag for flag in pair.rule_warnings)
+
+    def test_trap_material_end_date_gap_rejected(self) -> None:
+        # Horizons more than a week apart imply a different resolution question.
+        kalshi_market = {
+            "ticker": "K1",
+            "title": "Bitcoin above $70,000 on June 30?",
+            "expected_expiration_time": "2026-06-30T16:00:00Z",
+            "can_close_early": False,
+        }
+        poly_market = {
+            "conditionId": "0xabc",
+            "question": "Bitcoin above $70,000 on June 30?",
+            "endDate": "2026-08-30T16:00:00Z",  # two months later
             "clobTokenIds": '["111", "222"]',
         }
         pair = evaluate_pair(kalshi_market, poly_market)
@@ -369,6 +392,56 @@ class TestEvaluatePairEndToEnd:
         assert pair is not None
         assert pair.matched_fields["kalshi_threshold"] is None
         assert pair.matched_fields["poly_threshold"] is None
+        assert pair.status is MatchStatus.ACCEPTED
+
+    def test_one_sided_line_market_is_not_accepted(self) -> None:
+        # The live WNBA-totals false-match shape: Kalshi carries the line in a
+        # structured field (floor_strike) while the Polymarket counterpart's
+        # line is not parseable, so every rung of the total-points ladder would
+        # otherwise match the same Polymarket market. The line IS the market's
+        # identity, so a one-sided line must block acceptance, not ride along.
+        kalshi = {
+            "ticker": "KXWNBATOTAL-26JUN21NYLA-179",
+            "title": "New York vs Los Angeles",
+            "yes_sub_title": "Over 178.5 points scored",
+            "floor_strike": "178.5",
+            "strike_type": "greater",
+            "expected_expiration_time": "2026-06-22T02:00:00Z",
+            "category": "sports",
+        }
+        poly = {
+            "conditionId": "0xwnba",
+            "question": "New York vs Los Angeles",
+            "endDate": "2026-06-22T02:00:00Z",
+            "clobTokenIds": '["111", "222"]',
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.matched_fields["kalshi_threshold"] == "178.5"
+        assert pair.matched_fields["poly_threshold"] is None
+        assert pair.status is not MatchStatus.ACCEPTED
+        assert any("line" in reason or "threshold" in reason for reason in pair.status_reasons)
+
+    def test_matching_line_markets_still_accept(self) -> None:
+        # When both venues carry the same line the pair accepts as usual.
+        kalshi = {
+            "ticker": "KXWNBATOTAL-26JUN21NYLA-179",
+            "title": "New York vs Los Angeles over 178.5 points",
+            "floor_strike": "178.5",
+            "strike_type": "greater",
+            "expected_expiration_time": "2026-06-22T02:00:00Z",
+            "category": "sports",
+        }
+        poly = {
+            "conditionId": "0xwnba",
+            "question": "Will New York vs Los Angeles score over 178.5 points?",
+            "endDate": "2026-06-22T02:00:00Z",
+            "clobTokenIds": '["111", "222"]',
+        }
+        pair = evaluate_pair(kalshi, poly)
+        assert pair is not None
+        assert pair.matched_fields["kalshi_threshold"] == "178.5"
+        assert pair.matched_fields["poly_threshold"] == "178.5"
         assert pair.status is MatchStatus.ACCEPTED
 
     def test_different_election_office_is_rejected(self) -> None:
@@ -634,16 +707,19 @@ class TestEvaluatePairEndToEnd:
         }
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
-        assert pair.status is MatchStatus.MANUAL_REVIEW
-        assert any("void_policy_mismatch" in reason for reason in pair.status_reasons)
+        # Same event; the cancellation-tail divergence is surfaced as a risk
+        # flag for the human to verify rather than blocking the opportunity.
+        assert pair.status is MatchStatus.ACCEPTED
+        assert any("void_policy_mismatch" in flag for flag in pair.rule_warnings)
         assert "void_policy_basis" in pair.missing_rule_fields
         excerpts = pair.metadata_excerpts
         assert excerpts["polymarket"]["cancellation_policy_basis"] == "resolves_to_other"
         assert excerpts["kalshi"]["cancellation_policy_basis"] is None
 
-    def test_proven_incompatible_cancellation_policies_are_rejected(self) -> None:
-        # If Kalshi's rules text DID carry the fair-value language, the pair
-        # must hard-reject through the existing decide_status path.
+    def test_proven_incompatible_cancellation_policies_are_risk_flag(self) -> None:
+        # Even a proven fair-value vs resolves-to-other cancellation basis is
+        # identical in normal resolution; the divergence is a cancellation-tail
+        # risk flag (operator model §18), not a different-event rejection.
         kalshi, poly = self.equivalent_markets()
         kalshi["rules_primary"] = (
             str(kalshi["rules_primary"]) + " If the event is cancelled outright, "
@@ -655,8 +731,8 @@ class TestEvaluatePairEndToEnd:
         )
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
-        assert pair.status is MatchStatus.REJECTED
-        assert any("void_policy_conflict" in reason for reason in pair.status_reasons)
+        assert pair.status is MatchStatus.ACCEPTED
+        assert any("void_policy_conflict" in flag for flag in pair.rule_warnings)
 
     def test_spx_snapshot_vs_official_close_surfaces_finalization_mismatch(self) -> None:
         # The verified KXINXDIRY pair: boundary and date match, but the
@@ -811,14 +887,15 @@ class TestEvaluatePairEndToEnd:
         assert pair.matched_fields["kalshi_outcome_entity"] == "brianne k nadeau"
         assert pair.matched_fields["poly_outcome_entity"] == "christina henderson"
 
-    def test_dc_mayor_same_candidate_not_entity_rejected(self) -> None:
+    def test_dc_mayor_same_candidate_accepts_with_risk_flags(self) -> None:
         kalshi, poly = self.dc_mayor_markets("Brianne K. Nadeau", "Brianne K. Nadeau")
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
         assert not any("outcome entity" in reason for reason in pair.status_reasons)
-        # Matching entities only prevent false rejection; rule facts are
-        # still unverified, so the pair stays in review — never accepted.
-        assert pair.status is MatchStatus.MANUAL_REVIEW
+        # Same candidate, no different-event conflict: accepts with the
+        # unverified settlement facts carried as risk flags.
+        assert pair.status is MatchStatus.ACCEPTED
+        assert pair.rule_warnings
 
     def test_dc_mayor_subset_name_not_rejected(self) -> None:
         # Missing middle initial is the same person, never a conflict.
@@ -932,7 +1009,7 @@ class TestEvaluatePairEndToEnd:
         assert pair.status is MatchStatus.REJECTED
         assert any("player_prop_scope_conflict" in r for r in pair.status_reasons)
 
-    def test_title_match_but_missing_rules_is_manual_review(self) -> None:
+    def test_title_match_but_missing_rules_accepts_with_risk_flags(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("rules_primary")
         kalshi.pop("resolution_source")
@@ -940,7 +1017,9 @@ class TestEvaluatePairEndToEnd:
         poly.pop("resolutionSource")
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
-        assert pair.status is MatchStatus.MANUAL_REVIEW
+        # Unverifiable rules text/source are risk flags, not a manual_review
+        # block; the missing fields are still recorded for the human.
+        assert pair.status is MatchStatus.ACCEPTED
         assert "resolution_source" in pair.missing_rule_fields
         assert "resolution_text" in pair.missing_rule_fields
 
@@ -960,21 +1039,23 @@ class TestEvaluatePairEndToEnd:
         assert pair.status is MatchStatus.REJECTED
         assert any("strike" in reason or "threshold" in reason for reason in pair.status_reasons)
 
-    def test_different_resolution_source_is_rejected(self) -> None:
+    def test_different_resolution_source_is_risk_flag(self) -> None:
         kalshi, poly = self.equivalent_markets()
         poly["resolutionSource"] = "coinbase btc price"
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
-        assert pair.status is MatchStatus.REJECTED
-        assert any("resolution source" in reason for reason in pair.status_reasons)
+        # Different source wording is a verify-this risk flag, not proof of a
+        # different event.
+        assert pair.status is MatchStatus.ACCEPTED
+        assert any("resolution source" in flag for flag in pair.rule_warnings)
 
-    def test_missing_void_policy_is_manual_review(self) -> None:
+    def test_missing_void_policy_accepts_with_risk_flag(self) -> None:
         kalshi, poly = self.equivalent_markets()
         kalshi.pop("void_policy")
         poly.pop("voidPolicy")
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
-        assert pair.status is MatchStatus.MANUAL_REVIEW
+        assert pair.status is MatchStatus.ACCEPTED
         assert "void_policy" in pair.missing_rule_fields
 
     def test_equivalent_structured_metadata_is_accepted(self) -> None:

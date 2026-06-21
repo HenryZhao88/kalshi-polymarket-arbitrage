@@ -13,6 +13,7 @@ no Retry-After on 429 (docs.kalshi.com/getting_started/rate_limits).
 from __future__ import annotations
 
 import base64
+import logging
 import time
 from typing import Any
 
@@ -25,6 +26,8 @@ from arb_scanner.app.clients.base import CircuitBreaker, RestClient, TokenBucket
 PROD_BASE_URL = "https://api.elections.kalshi.com"
 DEMO_BASE_URL = "https://demo-api.kalshi.co"
 API_PREFIX = "/trade-api/v2"
+
+log = logging.getLogger("arb_scanner.clients.kalshi_rest")
 
 
 class KalshiSigner:
@@ -114,7 +117,12 @@ class KalshiRestClient:
         mve_filter: str | None = "exclude",
         max_pages: int = 100,
     ) -> list[dict[str, Any]]:
-        """Return all pages, failing on repeated cursors or an excessive page count."""
+        """Return all pages, failing only on a repeated cursor (loop bug).
+
+        Reaching ``max_pages`` is a graceful stop that returns what was
+        collected — the cap is a safety guardrail for full-venue coverage, not
+        a scan-killing error. Raise ``max_pages`` to cover a larger universe.
+        """
         markets: list[dict[str, Any]] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()
@@ -134,7 +142,13 @@ class KalshiRestClient:
                 raise VenueError(f"Kalshi pagination repeated cursor {next_cursor!r}")
             seen_cursors.add(next_cursor)
             cursor = next_cursor
-        raise VenueError(f"Kalshi market pagination exceeded {max_pages} pages")
+        log.warning(
+            "Kalshi discovery stopped at the %d-page cap with %d markets; more "
+            "remain unfetched (raise kalshi_max_pages to cover them)",
+            max_pages,
+            len(markets),
+        )
+        return markets
 
     async def get_orderbook(self, ticker: str, depth: int | None = None) -> dict[str, Any]:
         params = {"depth": depth} if depth is not None else None

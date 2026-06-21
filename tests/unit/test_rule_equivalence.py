@@ -71,26 +71,43 @@ class TestValidateRules:
         # UMA challenge window is always a warning on Polymarket-resolved markets
         assert any("uma" in w.lower() for w in result.warnings)
 
-    def test_trap_same_title_different_determination_time(self) -> None:
+    def test_trap_same_title_close_determination_times_is_risk_flag(self) -> None:
+        # A small timing difference (trading cutoff vs UMA end date, buffer
+        # days) is a settlement risk flag, not proof of a different event.
         result = validate_rules(
             kalshi_facts(),
             poly_facts(determination_time=T0 + timedelta(days=1)),
         )
+        assert result.hard_failures == ()
+        assert any("determination time differs" in f for f in result.risk_flags)
+
+    def test_trap_same_title_materially_different_determination_time(self) -> None:
+        # Horizons more than a week apart imply a different resolution question.
+        result = validate_rules(
+            kalshi_facts(),
+            poly_facts(determination_time=T0 + timedelta(days=30)),
+        )
         assert any("determination" in f for f in result.hard_failures)
 
-    def test_trap_same_game_different_void_rules(self) -> None:
+    def test_trap_same_game_different_void_rules_is_risk_flag(self) -> None:
+        # Void handling only diverges in the void/cancellation tail; the normal
+        # outcome is identical, so it is a risk flag for the human to verify.
         result = validate_rules(
             kalshi_facts(is_sports=True, void_policy="trades_stand"),
             poly_facts(is_sports=True, void_policy="refund_on_postponement"),
         )
-        assert any("void" in f for f in result.hard_failures)
+        assert result.hard_failures == ()
+        assert any("void policy differs" in f for f in result.risk_flags)
 
-    def test_different_resolution_sources_fail_hard(self) -> None:
+    def test_different_resolution_sources_are_risk_flag(self) -> None:
+        # Cross-venue source wording differs even for the same source; flag for
+        # verification rather than reject.
         result = validate_rules(
             kalshi_facts(resolution_source="ap election call"),
             poly_facts(resolution_source="fox news call"),
         )
-        assert any("resolution source" in f for f in result.hard_failures)
+        assert result.hard_failures == ()
+        assert any("resolution source differs" in f for f in result.risk_flags)
 
     def test_missing_resolution_source_warns_not_fails(self) -> None:
         result = validate_rules(
@@ -108,22 +125,22 @@ class TestValidateRules:
         )
         assert any("early start" in w for w in result.warnings)
 
-    def test_unknown_void_policy_requires_manual_review(self) -> None:
+    def test_unknown_void_policy_accepts_with_risk_flag(self) -> None:
         result = validate_rules(kalshi_facts(void_policy=None), poly_facts(void_policy=None))
-        assert any("void policy unknown" in warning for warning in result.warnings)
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert any("void policy unknown" in flag for flag in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
-    def test_missing_resolution_text_requires_manual_review(self) -> None:
+    def test_missing_resolution_text_accepts_with_risk_flag(self) -> None:
         result = validate_rules(kalshi_facts(resolution_text=""), poly_facts(resolution_text=""))
-        assert any("resolution text missing" in warning for warning in result.warnings)
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert any("resolution text missing" in flag for flag in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
-    def test_unknown_determination_time_requires_manual_review(self) -> None:
+    def test_unknown_determination_time_accepts_with_risk_flag(self) -> None:
         result = validate_rules(
             kalshi_facts(determination_time=None), poly_facts(determination_time=None)
         )
-        assert any("determination time unverified" in warning for warning in result.warnings)
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert any("determination time unverified" in flag for flag in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
 
 # Live rules text fetched 2026-06-11 from the GOVPARTYSC-26-R market and the
@@ -275,7 +292,8 @@ class TestOfficeLevelConflict:
         ambiguous = "Resolves according to the winner of the North Carolina Senate race."
         assert office_level_conflict(ambiguous, ambiguous) is None
         assert office_level_conflict(KALSHI_STATE_SENATE_RULES, ambiguous) is None
-        # And without other evidence the pair stays manual_review, not rejected.
+        # No different-event conflict: accepts with settlement risk flags, never
+        # hard-rejected on this ambiguous office evidence.
         result = validate_rules(
             kalshi_facts(
                 resolution_text=ambiguous,
@@ -291,7 +309,7 @@ class TestOfficeLevelConflict:
             ),
         )
         assert result.hard_failures == ()
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_text_with_both_levels_is_ambiguous_and_falls_through(self) -> None:
         both = (
@@ -600,8 +618,9 @@ class TestStockCloseVsIntramonthHighConflict:
         assert stock_close_vs_intramonth_high_conflict(POLY_SPX_HIGH, KALSHI_SPX_CLOSE) is not None
 
     def test_fixed_close_vs_final_trading_day_close_is_not_rejected(self) -> None:
-        # The potentially equivalent family from the scan: must stay
-        # manual_review for source/void verification, not be high-rejected.
+        # The potentially equivalent close-vs-close family: no different-event
+        # conflict, so it accepts with settlement risk flags for the human to
+        # verify (source/void), never high-rejected.
         assert (
             stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, POLY_SPX_FINAL_CLOSE)
             is None
@@ -621,7 +640,7 @@ class TestStockCloseVsIntramonthHighConflict:
             ),
         )
         assert result.hard_failures == ()
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_high_vs_high_is_not_rejected(self) -> None:
         assert stock_close_vs_intramonth_high_conflict(POLY_SPX_HIGH, POLY_SPX_HIGH) is None
@@ -698,7 +717,10 @@ class TestCancellationPolicyBasis:
 
 
 class TestVoidPolicyConflict:
-    def test_proven_fair_value_vs_resolves_to_other_is_rejected(self) -> None:
+    def test_proven_fair_value_vs_resolves_to_other_is_risk_flag(self) -> None:
+        # Same event; the bases agree in normal resolution and diverge only if
+        # the event is cancelled. Operator model (§18): a cancellation-tail
+        # divergence is a risk flag to verify, not a different-event rejection.
         message = void_policy_conflict(KALSHI_FAIR_VALUE_CANCELLATION, POLY_RESOLVES_TO_OTHER)
         assert message is not None
         assert "void_policy_conflict" in message
@@ -716,8 +738,9 @@ class TestVoidPolicyConflict:
                 void_policy=None,
             ),
         )
-        assert any("void_policy_conflict" in f for f in result.hard_failures)
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
+        assert result.hard_failures == ()
+        assert any("void_policy_conflict" in f for f in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_fires_in_either_direction(self) -> None:
         assert (
@@ -761,7 +784,7 @@ class TestVoidPolicyConflict:
             for w in result.warnings
         )
         assert "void_policy_basis" in result.missing_fields
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_both_sides_unknown_get_no_mismatch_warning(self) -> None:
         result = validate_rules(
@@ -770,13 +793,15 @@ class TestVoidPolicyConflict:
         )
         assert not any("void_policy_mismatch" in w for w in result.warnings)
 
-    def test_mismatch_warning_never_accepts(self) -> None:
-        # The warning can only push toward manual_review, never toward accept.
+    def test_void_mismatch_accepts_with_risk_flag(self) -> None:
+        # The mismatch is recorded as a risk flag the human must clear; it no
+        # longer blocks the opportunity from reaching economics.
         result = validate_rules(
             kalshi_facts(resolution_text=KALSHI_WC_CONTINENT_RULES),
             poly_facts(resolution_text=POLY_RESOLVES_TO_OTHER),
         )
-        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.ACCEPTED
+        assert any("void_policy_mismatch" in f for f in result.risk_flags)
 
 
 # Verbatim source/finalization excerpts fetched 2026-06-11
@@ -850,16 +875,16 @@ class TestSourceFinalizationMismatch:
             ),
         )
 
-    def test_snapshot_vs_official_close_warns_and_stays_manual_review(self) -> None:
+    def test_snapshot_vs_official_close_warns_and_accepts_with_risk_flag(self) -> None:
         result = self._result(KALSHI_SPX_SNAPSHOT, POLY_SPX_OFFICIAL_CLOSE)
         assert result.hard_failures == ()
         assert any(
             "source_finalization_mismatch: kalshi=fixed_time_snapshot "
             "polymarket=official_close" in w
-            for w in result.warnings
+            for w in result.risk_flags
         )
         assert "source_finalization_basis" in result.missing_fields
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_same_snapshot_basis_does_not_warn(self) -> None:
         result = self._result(KALSHI_SPX_SNAPSHOT, KALSHI_SPX_SNAPSHOT)
@@ -874,11 +899,14 @@ class TestSourceFinalizationMismatch:
         result = self._result(vague, POLY_SPX_OFFICIAL_CLOSE)
         assert not any("source_finalization_mismatch" in w for w in result.warnings)
 
-    def test_warning_cannot_produce_accepted(self) -> None:
+    def test_warning_accepts_with_risk_flag(self) -> None:
         result = self._result(KALSHI_SPX_SNAPSHOT, POLY_SPX_OFFICIAL_CLOSE)
-        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.ACCEPTED
+        assert any("source_finalization_mismatch" in f for f in result.risk_flags)
 
     def test_existing_hard_rejection_overrides(self) -> None:
+        # A material determination-horizon gap (>7d) is a different-event hard
+        # failure and overrides the source-finalization risk flag.
         result = validate_rules(
             kalshi_facts(
                 resolution_text=KALSHI_SPX_SNAPSHOT,
@@ -886,7 +914,7 @@ class TestSourceFinalizationMismatch:
             ),
             poly_facts(
                 resolution_text=POLY_SPX_OFFICIAL_CLOSE,
-                determination_time=T0 + timedelta(days=1),
+                determination_time=T0 + timedelta(days=30),
             ),
         )
         assert result.hard_failures
@@ -986,13 +1014,13 @@ class TestCandidateSetConflict:
         assert not any("candidate_set_conflict" in f for f in result.hard_failures)
         assert any("candidate_set_mismatch" in w for w in result.warnings)
         assert "candidate_set" in result.missing_fields
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_non_sweep_markets_never_fire(self) -> None:
         single = "Will Alice Johnson win the Michigan Senate primary?"
         assert candidate_set_conflict(single, POLY_INCUMBENT_COHORT) is None
 
-    def test_mismatch_warning_cannot_produce_accepted(self) -> None:
+    def test_mismatch_accepts_with_risk_flag(self) -> None:
         vague_sweep = (
             "Will the listed candidates all win their primary elections? "
             "Resolves Yes if every listed candidate wins."
@@ -1001,7 +1029,8 @@ class TestCandidateSetConflict:
             kalshi_facts(resolution_text=KALSHI_PROGRESSIVE_SLATE),
             poly_facts(resolution_text=vague_sweep),
         )
-        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.ACCEPTED
+        assert any("candidate_set_mismatch" in f for f in result.risk_flags)
 
 
 # Live titles from the 2026-06-11 10k-market dry-run (docs/VERIFICATION.md §14).
@@ -1213,18 +1242,19 @@ class TestCentralBankDirectionConflict:
         assert not any("central_bank" in f for f in result.hard_failures)
         assert any("central_bank_magnitude_mismatch" in w for w in result.warnings)
         assert "central_bank_magnitude" in result.missing_fields
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_ambiguous_side_falls_through(self) -> None:
         vague = "Bank of Mexico June 2026 meeting outcome market"
         assert central_bank_direction_conflict(vague, POLY_CB_INCREASE) is None
 
-    def test_magnitude_warning_cannot_accept(self) -> None:
+    def test_magnitude_mismatch_accepts_with_risk_flag(self) -> None:
         result = validate_rules(
             kalshi_facts(resolution_text=KALSHI_CB_CUT25),
             poly_facts(resolution_text=POLY_CB_DECREASE),
         )
-        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.ACCEPTED
+        assert any("central_bank_magnitude_mismatch" in f for f in result.risk_flags)
 
 
 # Verbatim rules from the verified Skubal pair, fetched 2026-06-12
@@ -1280,16 +1310,16 @@ class TestStatLeaderRuleMismatch:
             ),
         )
 
-    def test_split_vs_sole_winner_is_diagnostic_manual_review(self) -> None:
+    def test_split_vs_sole_winner_accepts_with_risk_flag(self) -> None:
         result = self._result(KALSHI_K_LEADER_RULES, POLY_K_LEADER_RULES)
         assert not any("stat_leader" in f for f in result.hard_failures)
         assert any(
             "stat_leader_rule_mismatch: tie policy kalshi=ties_split "
             "polymarket=sole_winner_tiebreak" in w
-            for w in result.warnings
+            for w in result.risk_flags
         )
         assert "stat_leader_tie_policy" in result.missing_fields
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_unknown_tie_policy_on_same_stat_pair_is_flagged(self) -> None:
         bare = "Will Tarik Skubal lead Pro Baseball in strikeouts for the 2026 season?"
@@ -1304,9 +1334,10 @@ class TestStatLeaderRuleMismatch:
         result = self._result("Will Boston beat New York?", "Will Boston beat New York?")
         assert not any("stat_leader_rule_mismatch" in w for w in result.warnings)
 
-    def test_warning_cannot_accept(self) -> None:
+    def test_tie_policy_mismatch_accepts_with_risk_flag(self) -> None:
         result = self._result(KALSHI_K_LEADER_RULES, POLY_K_LEADER_RULES)
-        assert decide_status(similarity_score=0.99, rules=result) is not MatchStatus.ACCEPTED
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.ACCEPTED
+        assert any("stat_leader_rule_mismatch" in f for f in result.risk_flags)
 
 
 class TestAllStarSelectionIsAward:
@@ -1325,14 +1356,126 @@ class TestAllStarSelectionIsAward:
         assert "player_prop_scope_conflict" in message
 
 
+class TestRiskFlagAcceptance:
+    """Same-event + risk-flags acceptance model (operator decision 2026-06-21,
+    docs/VERIFICATION.md §18).
+
+    A high-similarity pair with no *different-event* conflict is ACCEPTED so its
+    economics are evaluated; unverifiable or divergent *settlement mechanics*
+    (resolution source, void policy, UMA challenge window, close-timestamp
+    differences within a window) ride along as ``risk_flags`` for the human to
+    verify rather than silently blocking the opportunity. Different-event
+    conflicts and materially different determination horizons still hard-reject.
+    """
+
+    def test_missing_settlement_facts_accept_with_risk_flags(self) -> None:
+        # The dominant live shape: no determination time / source / void policy
+        # parseable on either venue. Previously stuck at manual_review forever.
+        result = validate_rules(
+            kalshi_facts(determination_time=None, resolution_source="", void_policy=None),
+            poly_facts(determination_time=None, resolution_source="", void_policy=None),
+        )
+        assert result.hard_failures == ()
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
+        flags = " ".join(result.risk_flags).lower()
+        assert "resolution source" in flags
+        assert "void policy" in flags
+        assert "determination time" in flags
+        assert "uma" in flags
+
+    def test_different_event_conflict_still_rejects(self) -> None:
+        # office_level_conflict proves the venues resolve on different offices.
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_STATE_SENATE_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_US_SENATE_RULES,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert result.hard_failures
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.REJECTED
+
+    def test_resolution_source_difference_is_risk_flag_not_rejection(self) -> None:
+        result = validate_rules(
+            kalshi_facts(resolution_source="ap election call"),
+            poly_facts(resolution_source="fox news call"),
+        )
+        assert result.hard_failures == ()
+        assert any("resolution source" in f.lower() for f in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
+
+    def test_determination_time_within_window_is_risk_flag(self) -> None:
+        result = validate_rules(
+            kalshi_facts(), poly_facts(determination_time=T0 + timedelta(days=1))
+        )
+        assert result.hard_failures == ()
+        assert any("determination time" in f.lower() for f in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
+
+    def test_determination_time_materially_apart_is_hard_failure(self) -> None:
+        # A month apart strongly implies a different resolution horizon/event.
+        result = validate_rules(
+            kalshi_facts(), poly_facts(determination_time=T0 + timedelta(days=30))
+        )
+        assert any("determination" in f.lower() for f in result.hard_failures)
+        assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.REJECTED
+
+    def test_void_policy_basis_divergence_is_risk_flag(self) -> None:
+        # Proven fair_value vs resolves_to_other: identical in normal
+        # resolution, divergent only in the cancellation tail -> risk flag.
+        result = validate_rules(
+            kalshi_facts(
+                resolution_text=KALSHI_FAIR_VALUE_CANCELLATION,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+            poly_facts(
+                resolution_text=POLY_RESOLVES_TO_OTHER,
+                determination_time=None,
+                resolution_source="",
+                void_policy=None,
+            ),
+        )
+        assert result.hard_failures == ()
+        assert any("void" in f.lower() for f in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
+
+    def test_known_void_policy_difference_is_risk_flag(self) -> None:
+        result = validate_rules(
+            kalshi_facts(void_policy="trades_stand"),
+            poly_facts(void_policy="refund_on_postponement"),
+        )
+        assert result.hard_failures == ()
+        assert any("void" in f.lower() for f in result.risk_flags)
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
+
+    def test_mid_similarity_still_manual_review(self) -> None:
+        result = validate_rules(kalshi_facts(), poly_facts())
+        assert decide_status(similarity_score=0.75, rules=result) is MatchStatus.MANUAL_REVIEW
+
+    def test_low_similarity_still_rejected(self) -> None:
+        result = validate_rules(kalshi_facts(), poly_facts())
+        assert decide_status(similarity_score=0.2, rules=result) is MatchStatus.REJECTED
+
+
 class TestDecideStatus:
     def test_high_confidence_clean_rules_accepted(self) -> None:
         result = validate_rules(kalshi_facts(), poly_facts())
         assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_hard_failure_rejected_even_at_high_similarity(self) -> None:
+        # A material (>7d) determination-horizon gap is a different-event hard
+        # failure; a small gap is only a risk flag.
         result = validate_rules(
-            kalshi_facts(), poly_facts(determination_time=T0 + timedelta(days=1))
+            kalshi_facts(), poly_facts(determination_time=T0 + timedelta(days=30))
         )
         assert decide_status(similarity_score=0.99, rules=result) is MatchStatus.REJECTED
 
@@ -1344,7 +1487,9 @@ class TestDecideStatus:
         result = validate_rules(kalshi_facts(), poly_facts())
         assert decide_status(similarity_score=0.75, rules=result) is MatchStatus.MANUAL_REVIEW
 
-    def test_many_warnings_cap_at_manual_review(self) -> None:
+    def test_many_risk_flags_still_accept(self) -> None:
+        # Settlement-mechanic caveats no longer cap acceptance; they ride along
+        # as risk_flags so a human can verify them before trading.
         result = validate_rules(
             kalshi_facts(is_sports=True, can_close_early=True, resolution_source=""),
             poly_facts(
@@ -1353,5 +1498,6 @@ class TestDecideStatus:
                 resolution_source="",
             ),
         )
-        assert len(result.warnings) >= 3
-        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.MANUAL_REVIEW
+        assert len(result.risk_flags) >= 3
+        assert result.hard_failures == ()
+        assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED

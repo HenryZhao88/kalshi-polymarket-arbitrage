@@ -35,9 +35,15 @@ class Settings(BaseSettings):
     storage_retention_days: int = Field(default=30, ge=1, le=3650)
     storage_max_candidates_per_scan: int = Field(default=5000, ge=1, le=1_000_000)
     kill_switch_file: Path | None = Path(".arb-scanner.kill")
-    polymarket_max_markets: int = Field(default=500, ge=101, le=50_000)
+    # Full-venue coverage by default (operator decision 2026-06-21). The keyset
+    # and REST pagination loops stop early when a venue is exhausted, so these
+    # high caps are safety guardrails, not a fixed fetch size. Lower them to
+    # sample a slice of the universe per pass.
+    polymarket_max_markets: int = Field(default=50_000, ge=101, le=200_000)
     polymarket_page_size: int = Field(default=100, ge=1, le=100)
-    polymarket_max_pages: int = Field(default=5, ge=1, le=500)
+    polymarket_max_pages: int = Field(default=500, ge=1, le=2_000)
+    kalshi_page_limit: int = Field(default=1000, ge=1, le=1000)
+    kalshi_max_pages: int = Field(default=200, ge=1, le=2_000)
 
     # Unknown inputs fail closed unless explicitly allowed. Dollar-valued cost
     # settings are per evaluated two-leg opportunity; leaving one unset marks it

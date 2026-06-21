@@ -580,6 +580,11 @@ async def scan_once(
                 hold_days=economics_hold_days,
             )
             for evaluation in evaluations:
+                gross_edge_per_share = (
+                    evaluation.gross.to_dollars() / Decimal(evaluation.executable_size)
+                    if evaluation.executable_size
+                    else Decimal(0)
+                )
                 reasons = check(
                     OpportunityRisk(
                         locked_capital=evaluation.locked,
@@ -591,6 +596,7 @@ async def scan_once(
                         hold_days=hold_days,
                         quote_age_seconds=quote_age,
                         category=category,
+                        gross_edge_per_share=gross_edge_per_share,
                     ),
                     limits,
                     exposure,
@@ -624,6 +630,7 @@ async def scan_once(
                         break_even_slippage_per_share=evaluation.break_even_slippage_per_share,
                         break_even_extra_fees=evaluation.break_even_extra_fees,
                         snapshot_id=snapshot_ids.get("kalshi_yes"),
+                        risk_flags=pair.rule_warnings,
                     )
 
                 assumptions: dict[str, Any] = {
@@ -637,6 +644,7 @@ async def scan_once(
                     "polymarket_fee_source": fee_schedule.source.value,
                     "missing_costs": list(missing_costs),
                     "kalshi_fee_source": "general_schedule_conservative",
+                    "risk_flags": list(pair.rule_warnings),
                     "alert_payload": payload.to_dict() if payload is not None else None,
                 }
                 if store is not None:

@@ -5,10 +5,13 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from arb_scanner.app.alerts.base import AlertPayload
 from arb_scanner.app.clients.polymarket_gamma import GammaDiscoveryResult
 from arb_scanner.app.economics import CostAssumptions, Direction
 from arb_scanner.app.markets.polymarket import PolymarketMarket
+from arb_scanner.app.markets.rule_equivalence import MatchStatus
 from arb_scanner.app.risk.controls import RiskLimits
 from arb_scanner.app.risk.kill_switch import KillSwitch
 from arb_scanner.app.scanner import (
@@ -285,6 +288,9 @@ class TestScanOnce:
         assert alerted
         assert sink.sent and sink.sent[0].net_edge > Money.zero()
         assert any("ALERT" in line for line in report.render_lines())
+        # The emitted alert carries the settlement caveats to verify (at least
+        # the ever-present UMA challenge window on a Polymarket-resolved pair).
+        assert any("UMA challenge window" in flag for flag in sink.sent[0].risk_flags)
 
     async def test_market_fee_metadata_is_used_in_economics(self) -> None:
         report = await scan_once(
@@ -406,7 +412,15 @@ class TestScanOnce:
         assert len(snapshots) == 4
 
     async def test_scan_persists_manual_review_and_rejection_diagnostics(self) -> None:
-        manual = {key: value for key, value in POLY_MARKET.items() if key != "voidPolicy"}
+        # manual_review is now triggered by mid-band similarity (0.6–0.9): a
+        # related-but-not-identical question. voidPolicy is also dropped so the
+        # row still carries a missing settlement fact for the human.
+        manual = {
+            key: value
+            for key, value in POLY_MARKET.items()
+            if key != "voidPolicy"
+        }
+        manual["question"] = "Will Bitcoin exceed $70,000 sometime in late June?"
         rejected = {
             **POLY_MARKET,
             "conditionId": "0xrejected",
@@ -434,7 +448,7 @@ class TestScanOnce:
             await engine.dispose()
 
         assert len(manual_rows) == 1
-        assert manual_rows[0].matched_fields["missing_rule_fields"] == ["void_policy"]
+        assert "void_policy" in manual_rows[0].matched_fields["missing_rule_fields"]
         assert manual_rows[0].matched_fields["metadata_excerpts"]["polymarket"]["question"]
         assert len(rejected_rows) == 1
         assert any(
@@ -475,6 +489,9 @@ def test_candidate_prefilter_uses_rare_shared_tokens() -> None:
 
 async def test_manual_review_is_counted_rendered_and_not_evaluated() -> None:
     market = {key: value for key, value in POLY_MARKET.items() if key != "voidPolicy"}
+    # Mid-band similarity (0.6–0.9) is the manual_review trigger under the
+    # same-event + risk-flags model; missing voidPolicy keeps a flag in view.
+    market["question"] = "Will Bitcoin exceed $70,000 sometime in late June?"
     report = await scan_once(
         kalshi=StubKalshi(),
         gamma=StubGamma(market),
@@ -491,3 +508,54 @@ async def test_manual_review_is_counted_rendered_and_not_evaluated() -> None:
     assert "NOT TRADE SAFE" in rendered
     assert "void_policy" in rendered
     assert "hypothetical edge: NOT COMPUTED" in rendered
+
+
+@pytest.mark.live
+async def test_live_pipeline_finds_candidates_and_economics_are_bounded() -> None:
+    """End-to-end proof on real venue data (run with: uv run pytest -m live).
+
+    Unit tests cannot prove the pipeline fires on real markets. This bounded
+    live pass asserts structural invariants that must hold against the actual
+    Kalshi + Polymarket universe regardless of day-to-day market state:
+    discovery and structured matching produce candidates, and every evaluated
+    opportunity is plausibility-bounded and carries its settlement risk flags.
+    """
+    import aiohttp
+
+    from arb_scanner.app.clients.kalshi_rest import KalshiRestClient
+    from arb_scanner.app.clients.polymarket_clob import PolymarketClobClient
+    from arb_scanner.app.clients.polymarket_gamma import PolymarketGammaClient
+
+    async with aiohttp.ClientSession() as session:
+        report = await scan_once(
+            kalshi=KalshiRestClient(session),
+            gamma=PolymarketGammaClient(session),
+            clob=PolymarketClobClient(session),
+            sinks=[],
+            limits=permissive_limits(),
+            cost_assumptions=known_costs(),
+            allow_unknown_fees=True,
+            allow_unknown_costs=True,
+            polymarket_max_markets=3000,
+            polymarket_max_pages=30,
+            max_kalshi_pages=8,
+            now=datetime.now(UTC),
+        )
+
+    # The live universe always has cross-venue look-alikes to classify.
+    assert report.kalshi_markets_scannable > 0
+    assert report.poly_markets_scannable > 0
+    assert report.raw_title_candidates > 0
+    assert report.structured_candidates > 0
+
+    limits = permissive_limits()
+    for pair, evaluation, _reasons in report.opportunities:
+        # Every accepted pair that reached economics carries its settlement
+        # caveats (at minimum the ever-present UMA challenge window).
+        assert pair.rule_warnings
+        assert pair.status is MatchStatus.ACCEPTED
+        # Any pair that actually ALERTED (no rejection reasons) must have a
+        # plausibility-bounded edge — the false-match guard held on live data.
+        if not _reasons:
+            gross_per_share = evaluation.gross.to_dollars() / Decimal(evaluation.executable_size)
+            assert gross_per_share <= limits.max_plausible_edge_per_share

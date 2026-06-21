@@ -27,6 +27,12 @@ class AlertPayload:
     break_even_slippage_per_share: Decimal
     break_even_extra_fees: Money
     snapshot_id: int | None
+    #: Settlement-mechanic caveats a human must verify before trading (same
+    #: event, different tail-state handling): resolution source, void policy,
+    #: UMA challenge window, close-timestamp differences, etc. An alert is a
+    #: price-dislocation lead on a likely-equivalent pair, never a guaranteed
+    #: profit — these flags say what to check.
+    risk_flags: tuple[str, ...] = ()
 
     def render_text(self) -> str:
         other_fees = (
@@ -54,9 +60,12 @@ class AlertPayload:
             ),
             f"snapshot #{self.snapshot_id}" if self.snapshot_id is not None else "no snapshot",
         ]
+        if self.risk_flags:
+            lines.append(f"VERIFY before trading ({len(self.risk_flags)}):")
+            lines.extend(f"  - {flag}" for flag in self.risk_flags)
         return "\n".join(lines)
 
-    def to_dict(self) -> dict[str, str | int | float | None]:
+    def to_dict(self) -> dict[str, str | int | float | None | list[str]]:
         return {
             "kalshi_ticker": self.kalshi_ticker,
             "poly_condition_id": self.poly_condition_id,
@@ -79,6 +88,7 @@ class AlertPayload:
             "slippage_cost_dollars": str(self.fees.slippage_cost.to_dollars()),
             "unknown_cost_buffer_dollars": str(self.fees.unknown_cost_buffer.to_dollars()),
             "snapshot_id": self.snapshot_id,
+            "risk_flags": list(self.risk_flags),
         }
 
 

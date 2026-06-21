@@ -118,6 +118,8 @@ async def _scan_pass(
             polymarket_page_size=settings.polymarket_page_size,
             polymarket_max_pages=settings.polymarket_max_pages,
             polymarket_max_markets=settings.polymarket_max_markets,
+            kalshi_page_limit=settings.kalshi_page_limit,
+            max_kalshi_pages=settings.kalshi_max_pages,
         )
 
     if not settings.persist_scans:

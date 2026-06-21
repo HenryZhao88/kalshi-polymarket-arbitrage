@@ -4,10 +4,17 @@ exact structured match → RapidFuzz score (difflib fallback) → token overlap.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from arb_scanner.app.markets.parsers import parse_features
+
+# Two genuinely-equivalent markets carry close/end timestamps a few hours apart
+# (trading cutoff vs UMA end date). A gap inside this window is a structured
+# agreement; a larger gap is simply not comparable here and never a conflict —
+# material-horizon rejection belongs to the rule layer
+# (rule_equivalence.DETERMINATION_TIME_MAX_DELTA), not the similarity score.
+DETERMINATION_TIME_AGREEMENT_WINDOW = timedelta(hours=48)
 
 try:
     from rapidfuzz import fuzz
@@ -62,11 +69,12 @@ def similarity(
         else:
             conflicts.append(f"direction {fa.direction} != {fb.direction}")
     if determination_time_a and determination_time_b:
-        comparable += 1
-        if determination_time_a == determination_time_b:
+        # A small gap is a structured agreement; a larger gap is left out of the
+        # comparable set rather than recorded as a conflict, so it never tanks
+        # the score. The rule layer rejects materially different horizons.
+        if abs(determination_time_a - determination_time_b) <= DETERMINATION_TIME_AGREEMENT_WINDOW:
+            comparable += 1
             agreements += 1
-        else:
-            conflicts.append(f"determination_time {determination_time_a} != {determination_time_b}")
     if fa.event_date is not None and fb.event_date is not None:
         comparable += 1
         if fa.event_date == fb.event_date:

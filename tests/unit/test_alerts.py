@@ -73,6 +73,39 @@ class TestRenderText:
         assert payload["polymarket_fee_dollars"] == "0.1164"
         assert payload["unknown_cost_buffer_dollars"] == "0"
 
+    def test_risk_flags_are_rendered_and_persisted(self) -> None:
+        flagged = AlertPayload(
+            kalshi_ticker="KXBTCD-26JUN30-T70000",
+            poly_condition_id="0xabcdef1234567890",
+            direction="kalshi_yes_poly_no",
+            confidence=0.93,
+            size=100,
+            depth_summary="k_levels=1 p_levels=1",
+            fees=FeeBreakdown(),
+            net_edge=Money.from_dollars("6.25"),
+            simple_return=D("0.067"),
+            annualized_return=D("0.81"),
+            break_even_slippage_per_share=D("0.0625"),
+            break_even_extra_fees=Money.from_dollars("6.25"),
+            snapshot_id=42,
+            risk_flags=(
+                "resolution source unverified on at least one venue",
+                "UMA challenge window: Polymarket outcome can be disputed post-resolution",
+            ),
+        )
+        text = flagged.render_text()
+        assert "VERIFY" in text.upper()
+        assert "resolution source unverified" in text
+        assert "UMA challenge window" in text
+        persisted = flagged.to_dict()
+        assert persisted["risk_flags"] == [
+            "resolution source unverified on at least one venue",
+            "UMA challenge window: Polymarket outcome can be disputed post-resolution",
+        ]
+
+    def test_no_risk_flags_renders_cleanly(self) -> None:
+        assert PAYLOAD.to_dict()["risk_flags"] == []
+
 
 class TestDiscordSink:
     async def test_posts_to_webhook(self, aiohttp_client: AiohttpClientFn) -> None:

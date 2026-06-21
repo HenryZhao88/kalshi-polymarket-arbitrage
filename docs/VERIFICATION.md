@@ -837,3 +837,71 @@ on. The sanctioned fix is to extend the trust store with the proxy's root CA:
 3. Re-run the gate before any live scan:
    `curl -s -o /dev/null -w "%{http_code}\n" https://api.elections.kalshi.com/trade-api/v2/markets?limit=1`
    must print `200` without insecure flags.
+
+## 18. Same-event + risk-flags acceptance model (operator decision 2026-06-21)
+
+**Problem.** Through 2026-06-12 the scanner had never produced a single
+accepted pair or opportunity: the 818 MB evidence DB held 185,221 matched
+pairs (182,990 rejected, 2,231 manual_review, **0 accepted, 0 opportunities**).
+Root cause: `decide_status` required `similarity ≥ 0.9` **and ≤ 1 rule warning**
+(only the ever-present UMA warning allowed), but every Polymarket pair carries
+at least three settlement warnings — `resolution source unverified` (2231/2231),
+`void policy unknown` (2231/2231), and the UMA challenge window (always). The
+≤1-warning gate was therefore mathematically unsatisfiable for any Polymarket
+pair: the design was not fail-closed, it was **fail-always**, and a provably
+same-event pair with a blatant price dislocation could never surface.
+
+**Decision (operator, 2026-06-21).** For a pair the scanner is confident is the
+SAME event, a price dislocation is real arbitrage; settlement-mechanic
+differences (resolution-source wording, void policy, UMA dispute window, exact
+close timestamp) are tail risks to verify, not vetoes. The scanner stays
+100% alert-only; it never trades.
+
+**Implementation.**
+- `rule_equivalence.RuleEquivalenceResult` gains `risk_flags`. `validate_rules`
+  reclassifies settlement-mechanic differences (resolution source, void policy,
+  void_policy_conflict basis, UMA window, source-finalization, tie policy,
+  close-timestamp gaps within `DETERMINATION_TIME_MAX_DELTA = 7 days`) from
+  hard failures / acceptance-blocking warnings into `risk_flags`. Different-EVENT
+  detectors (continent, office level, basket, settlement basis, sports stage,
+  crypto perf, stock close/high, candidate set, player prop, central-bank
+  direction) and materially different determination horizons (>7 days) remain
+  hard failures. `decide_status` now accepts at `similarity ≥ 0.9` with no hard
+  failure; risk flags ride along on the opportunity and every alert
+  (`AlertPayload.risk_flags`, rendered as "VERIFY before trading").
+- `matching.similarity` no longer records a determination-time difference as a
+  score-tanking conflict; a gap ≤ 48 h counts as agreement, larger gaps are
+  simply not comparable (the rule layer owns horizon rejection).
+
+**Accuracy guards (verified necessary on live data).** A first full live pass
+(Kalshi 20k / Polymarket ~39k) produced 585 accepted and **89 alerts**, but the
+alerts were dominated by false matches — e.g. the WNBA total-points ladder
+where one Polymarket market matched every Kalshi line, yielding absurd
+~82,000% annualized "arbitrage". Two fixes:
+1. **Implausible-edge guard** (`RiskLimits.max_plausible_edge_per_share`,
+   default `$0.15`): two genuinely-equivalent binary markets in liquid venues
+   never trade with a large guaranteed cross-venue edge, so a gross edge per
+   share above the cap is treated as evidence of non-equivalence and does not
+   alert (still recorded). Cut alerts 89 → 12.
+2. **One-sided line/strike blocks acceptance**: a numeric line/strike is a
+   same-event *identity* discriminator, not a settlement mechanic. Kalshi
+   exposes the line in `floor_strike`/`cap_strike`; when exactly one venue has a
+   parseable threshold the shared line cannot be confirmed, so the pair caps at
+   manual_review instead of accepting. Cut alerts 12 → 3 and moved the WNBA
+   ladders to manual_review (accepted 591 → 418, manual_review → 6,697).
+
+**Live confirmation (2026-06-21, full Polymarket coverage, Kalshi 20k).**
+Funnel: raw_title=64,868 structured=56,549 manual_review=6,697 **accepted=418**
+rejected=57,753; **3 alerts**, all plausible same-event leads with single-digit-
+¢ edges (Valencia–Barcelona ACB winner; Argentina World-Cup clean sheet;
+US unemployment U-3 >4.4% with a confirmed matching 4.4 strike on both venues).
+`check-log` gate: `accepted>=1` (418), `structured>=1`, `manual_review>=1` all
+pass. Opt-in end-to-end test `test_live_pipeline_finds_candidates_and_economics_are_bounded`
+(`pytest -m live`) asserts the invariants against the live universe.
+
+**Note on §10–§17.** Pairs previously documented as "keep manual_review" because
+a settlement mechanic diverged (e.g. §10 World Cup cancellation basis, §11 S&P
+source/finalization, §17 tie policy) are now ACCEPTED with the corresponding
+divergence carried as a `risk_flag`. Genuinely different-event divergences
+(§7 GOVPARTY settlement basis, §8 office level, §9 contract shapes) remain hard
+rejections.

@@ -17,13 +17,20 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from arb_scanner.app.markets.parsers import US_STATE_NAMES
 
 ACCEPT_THRESHOLD = 0.9
 REVIEW_THRESHOLD = 0.6
+
+# Two genuinely-equivalent cross-venue markets settle the same real-world event
+# but routinely carry different close/end timestamps (trading-cutoff vs UMA end
+# date, buffer days). Differences inside this window are a settlement-timing
+# risk flag, not proof of a different event. Beyond it, the resolution horizons
+# differ materially enough to imply a different question — a hard failure.
+DETERMINATION_TIME_MAX_DELTA = timedelta(days=7)
 
 # Settlement-basis divergence verified against live venue metadata on
 # 2026-06-11 (docs/VERIFICATION.md §7): Kalshi GOVPARTY-family contracts pay
@@ -810,6 +817,11 @@ class RuleEquivalenceResult:
     hard_failures: tuple[str, ...]
     warnings: tuple[str, ...]
     missing_fields: tuple[str, ...]
+    #: Settlement-mechanic caveats (resolution source, void policy, UMA window,
+    #: close-timestamp differences, tie/finalization mechanics) that a human
+    #: must verify before trading. They ride along with an accepted opportunity
+    #: instead of blocking it — same event, different tail-state handling.
+    risk_flags: tuple[str, ...] = ()
 
 
 def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEquivalenceResult:
@@ -817,22 +829,40 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
     warnings: list[str] = []
     missing: list[str] = []
 
-    # Determination time: end date vs determination time must agree exactly.
+    # Determination time: identical events routinely carry different close/end
+    # timestamps. A difference inside DETERMINATION_TIME_MAX_DELTA is a timing
+    # risk flag; beyond it the resolution horizons differ enough to imply a
+    # different question (hard failure). Unknown on either side is a risk flag.
     if kalshi.determination_time and poly.determination_time:
-        if kalshi.determination_time != poly.determination_time:
+        delta = abs(kalshi.determination_time - poly.determination_time)
+        if delta > DETERMINATION_TIME_MAX_DELTA:
             failures.append(
-                "determination time differs: "
-                f"kalshi={kalshi.determination_time} poly={poly.determination_time}"
+                "determination horizons differ materially: "
+                f"kalshi={kalshi.determination_time} poly={poly.determination_time} "
+                f"(Δ={delta})"
             )
+        elif delta > timedelta(0):
+            warnings.append(
+                "determination time differs within window: "
+                f"kalshi={kalshi.determination_time} poly={poly.determination_time} "
+                "— verify resolution timing"
+            )
+            missing.append("determination_time")
     else:
         warnings.append("determination time unverified on at least one venue")
         missing.append("determination_time")
 
-    # Resolution source.
+    # Resolution source: cross-venue wording almost never matches even for the
+    # same source ("AP" vs "Associated Press, Fox News, and NBC"). A difference
+    # is a risk flag to verify, not proof of a different event.
     k_src, p_src = kalshi.resolution_source.strip().lower(), poly.resolution_source.strip().lower()
     if k_src and p_src:
         if k_src != p_src:
-            failures.append(f"resolution source differs: {k_src!r} vs {p_src!r}")
+            warnings.append(
+                f"resolution source differs: {k_src!r} vs {p_src!r} — verify both "
+                "venues resolve from the same source"
+            )
+            missing.append("resolution_source")
     else:
         warnings.append("resolution source unverified on at least one venue")
         missing.append("resolution_source")
@@ -859,12 +889,14 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
     poly_combined = (
         f"{poly.title}\n{poly.resolution_text}" if poly.title else poly.resolution_text
     )
+    # Hard failures here prove the venues resolve on DIFFERENT EVENTS/QUESTIONS
+    # (not merely different settlement mechanics) — buying both legs is not a
+    # hedge, so the pair is rejected outright.
     for detect in (
         continent_scope_conflict,
         sports_stage_vs_winner_conflict,
         crypto_performance_vs_price_threshold_conflict,
         stock_close_vs_intramonth_high_conflict,
-        void_policy_conflict,
         candidate_set_conflict,
         player_prop_scope_conflict,
         central_bank_direction_conflict,
@@ -872,6 +904,13 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         conflict = detect(kalshi_combined, poly_combined)
         if conflict:
             failures.append(conflict)
+    # A proven fair-value vs resolves-to-other cancellation basis is identical
+    # in normal resolution and diverges only in the cancellation tail: same
+    # event, different mechanic -> risk flag, not a hard failure.
+    void_basis_conflict = void_policy_conflict(kalshi_combined, poly_combined)
+    if void_basis_conflict:
+        warnings.append(void_basis_conflict)
+        missing.append("void_policy_basis")
     # Same-stat leader pairs: surface tie-policy state explicitly. Proven
     # different bases, or any side unknown, is a diagnostic blocker — exact
     # ties pay proportionally on one venue and a single winner on the other.
@@ -959,12 +998,18 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
         )
         missing.append("source_finalization_basis")
 
-    # Void / DNP / postponement handling.
+    # Void / DNP / postponement handling. Differences only change the payout in
+    # the void/cancellation tail state, so they are risk flags to verify rather
+    # than proof of a different event.
     if kalshi.void_policy is None or poly.void_policy is None:
         warnings.append("void policy unknown on at least one venue")
         missing.append("void_policy")
     elif kalshi.void_policy != poly.void_policy:
-        failures.append(f"void policy differs: kalshi={kalshi.void_policy} poly={poly.void_policy}")
+        warnings.append(
+            f"void policy differs: kalshi={kalshi.void_policy} poly={poly.void_policy} "
+            "— verify cancellation/void handling matches"
+        )
+        missing.append("void_policy")
 
     # UMA challenge window applies to Polymarket-resolved markets.
     if poly.uma_resolution:
@@ -974,10 +1019,12 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
     if kalshi.is_sports or poly.is_sports:
         if kalshi.sports_policy and poly.sports_policy:
             if kalshi.sports_policy != poly.sports_policy:
-                failures.append(
+                warnings.append(
                     "sports postponement/cancellation policy differs: "
-                    f"kalshi={kalshi.sports_policy} poly={poly.sports_policy}"
+                    f"kalshi={kalshi.sports_policy} poly={poly.sports_policy} "
+                    "— verify postponement handling matches"
                 )
+                missing.append("sports_postponement_policy")
         elif kalshi.sports_policy or poly.sports_policy:
             warnings.append("sports postponement/cancellation policy unverified")
             missing.append("sports_postponement_policy")
@@ -987,10 +1034,14 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
                 "scheduled start (may miss early starts); Kalshi may trade past close"
             )
 
+    # Every warning produced here is a same-event settlement-mechanic caveat, so
+    # warnings and risk_flags carry the same content. (The discovery layer adds
+    # same-event-confidence presence flags to a combined result downstream.)
     return RuleEquivalenceResult(
         hard_failures=tuple(failures),
         warnings=tuple(warnings),
         missing_fields=tuple(dict.fromkeys(missing)),
+        risk_flags=tuple(warnings),
     )
 
 
@@ -1001,13 +1052,19 @@ def decide_status(
     accept_threshold: float = ACCEPT_THRESHOLD,
     review_threshold: float = REVIEW_THRESHOLD,
 ) -> MatchStatus:
-    """Stage 5. Hard rule failures veto; warnings cap at manual_review."""
+    """Stage 5 (same-event + risk-flags model, docs/VERIFICATION.md §18).
+
+    A different-event hard failure vetoes regardless of text similarity. Above
+    the accept threshold with no hard failure the pair is ACCEPTED so economics
+    run; any unverified or divergent settlement mechanics travel with it as
+    ``risk_flags`` for a human to clear before trading — they no longer block
+    the opportunity. Between the review and accept thresholds the pair is
+    manual_review; below review it is rejected.
+    """
     if rules.hard_failures:
         return MatchStatus.REJECTED
     if similarity_score < review_threshold:
         return MatchStatus.REJECTED
-    # More than the ever-present UMA warning means a human must look.
-    substantive_warnings = len(rules.warnings)
-    if similarity_score >= accept_threshold and substantive_warnings <= 1:
+    if similarity_score >= accept_threshold:
         return MatchStatus.ACCEPTED
     return MatchStatus.MANUAL_REVIEW

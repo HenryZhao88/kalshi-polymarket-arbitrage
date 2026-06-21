@@ -193,3 +193,26 @@ class TestSimilarityCascade:
     def test_token_overlap_fallback(self) -> None:
         result = similarity("lakers celtics game 7 winner", "celtics lakers game seven")
         assert result.score > 0.4
+
+    def test_determination_time_within_tolerance_counts_as_agreement(self) -> None:
+        # The same event routinely carries close/end timestamps a few hours
+        # apart (trading cutoff vs UMA end date). That should still count as a
+        # structured agreement, never a conflict that tanks the score.
+        a = "Bitcoin above $70,000 on June 30?"
+        b = "Will BTC be above $70k on June 30?"
+        t1 = datetime(2026, 6, 30, 16, tzinfo=UTC)
+        t2 = datetime(2026, 6, 30, 4, tzinfo=UTC)  # 12 hours earlier
+        result = similarity(a, b, determination_time_a=t1, determination_time_b=t2)
+        assert result.structured_conflicts == ()
+        assert result.stage is MatchStage.STRUCTURED
+
+    def test_determination_time_difference_is_not_a_conflict(self) -> None:
+        # A larger timestamp gap no longer caps similarity to a structured
+        # conflict; the rule-equivalence layer owns material-horizon rejection.
+        a = "Bitcoin above $70,000 on June 30?"
+        b = "Will BTC be above $70k on June 30?"
+        t1 = datetime(2026, 6, 30, 16, tzinfo=UTC)
+        t2 = datetime(2026, 7, 15, 16, tzinfo=UTC)  # 15 days later
+        result = similarity(a, b, determination_time_a=t1, determination_time_b=t2)
+        assert not any("determination_time" in c for c in result.structured_conflicts)
+        assert result.score >= 0.7

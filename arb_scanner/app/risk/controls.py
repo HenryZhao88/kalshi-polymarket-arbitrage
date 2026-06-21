@@ -25,6 +25,11 @@ class RiskLimits:
     category_allowlist: frozenset[str] | None = None  # None = all categories
     allow_unknown_hold_time: bool = False
     allow_unknown_quote_age: bool = False
+    # Two genuinely-equivalent binary markets in liquid venues never trade with
+    # a large guaranteed cross-venue edge. A gross edge per share above this cap
+    # is far more likely a false match (e.g. a Kalshi total-points line matched
+    # to the wrong Polymarket line) than a real arbitrage, so it must not alert.
+    max_plausible_edge_per_share: Decimal = Decimal("0.15")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +45,9 @@ class OpportunityRisk:
     hold_days: Decimal | None
     quote_age_seconds: float | None
     category: str | None
+    #: Gross edge per share = 1 − leg1_vwap − leg2_vwap (pre-fee). A large value
+    #: signals the two markets are not actually the same event.
+    gross_edge_per_share: Decimal = Decimal(0)
 
 
 def check(
@@ -90,4 +98,10 @@ def check(
         opp.category is None or opp.category.lower() not in limits.category_allowlist
     ):
         reasons.append(f"category {opp.category!r} not in allowlist")
+    if opp.gross_edge_per_share > limits.max_plausible_edge_per_share:
+        reasons.append(
+            f"implausible edge {opp.gross_edge_per_share}/share > "
+            f"{limits.max_plausible_edge_per_share} — likely non-equivalent markets, "
+            "not a real arbitrage"
+        )
     return reasons

@@ -715,6 +715,14 @@ def evaluate_pair(
     status = decide_status(sim.score, combined_rules)
     if structured_conflicts:
         status = MatchStatus.REJECTED
+    # A numeric line/strike is a same-event discriminator, not a settlement
+    # mechanic: when exactly one venue exposes a threshold the shared line
+    # cannot be confirmed (the live WNBA/totals ladder false-match shape, where
+    # one Polymarket market matched every Kalshi total line), so the pair cannot
+    # be accepted on similarity alone — it caps at manual_review for a human.
+    threshold_one_sided = (effective_k_threshold is None) != (poly_threshold_evidence is None)
+    if status is MatchStatus.ACCEPTED and threshold_one_sided:
+        status = MatchStatus.MANUAL_REVIEW
 
     differing: dict[str, Any] = {
         **{f"conflict_{index}": value for index, value in enumerate(structured_conflicts)},

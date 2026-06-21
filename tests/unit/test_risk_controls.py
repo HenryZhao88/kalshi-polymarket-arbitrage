@@ -117,3 +117,29 @@ def test_category_allowlist() -> None:
     limits = RiskLimits(category_allowlist=frozenset({"sports"}))
     reasons = check(good_opp(category="crypto"), limits, ExposureTracker(), KillSwitch())
     assert any("allowlist" in r for r in reasons)
+
+
+def test_implausible_edge_blocks_likely_non_equivalent_match() -> None:
+    # Two genuinely-equivalent binary markets in liquid venues never show a
+    # ~50¢/share guaranteed edge: an implausibly large edge is evidence the
+    # pair is NOT the same event (false match), so it must not alert.
+    reasons = check(
+        good_opp(gross_edge_per_share=D("0.50")),
+        RiskLimits(),
+        ExposureTracker(),
+        KillSwitch(),
+    )
+    assert any("implausible" in r.lower() for r in reasons)
+
+
+def test_plausible_edge_passes() -> None:
+    # A realistic cross-venue arb edge (single-digit ¢/share) is allowed.
+    assert (
+        check(
+            good_opp(gross_edge_per_share=D("0.08")),
+            RiskLimits(),
+            ExposureTracker(),
+            KillSwitch(),
+        )
+        == []
+    )

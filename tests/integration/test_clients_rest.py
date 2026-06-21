@@ -99,6 +99,27 @@ class TestKalshiRest:
         assert len(requests) == 2
         assert requests[1]["cursor"] == "page-2"
 
+    async def test_get_all_markets_stops_at_max_pages_without_raising(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        # An inexhaustible feed (always a fresh cursor): hitting the page cap is
+        # a graceful stop that returns what was collected, not a scan-killing
+        # error. The cap is a safety guardrail for full-venue coverage.
+        async def markets(request: web.Request) -> web.Response:
+            cursor = request.query.get("cursor") or "0"
+            return web.json_response(
+                {"markets": [{"ticker": f"M{cursor}"}], "cursor": str(int(cursor) + 1)}
+            )
+
+        app = web.Application()
+        app.router.add_get("/trade-api/v2/markets", markets)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(client.session, base_url=str(client.make_url("")))
+
+        result = await kalshi.get_all_markets(limit=100, max_pages=3)
+        assert [market["ticker"] for market in result] == ["M0", "M1", "M2"]
+
     async def test_get_all_markets_rejects_repeated_cursor(
         self, aiohttp_client: AiohttpClientFn
     ) -> None:
