@@ -1,5 +1,7 @@
 """Settings: safe defaults and secret masking."""
 
+from decimal import Decimal
+
 from pydantic import SecretStr
 
 from arb_scanner.app.config import Mode, Settings
@@ -8,6 +10,18 @@ from arb_scanner.app.config import Mode, Settings
 def test_default_mode_is_discovery_only() -> None:
     settings = Settings(_env_file=None)
     assert settings.mode is Mode.DISCOVERY_ONLY
+
+
+def test_execution_gates_are_fail_closed_by_default() -> None:
+    # Two independent gates must both be set to ever place a live order:
+    # mode=execution-enabled AND the explicit live_order_placement flag. The
+    # geoblock runtime check is a third, separate gate enforced at call time.
+    settings = Settings(_env_file=None)
+    assert settings.live_order_placement is False
+    # Conservative execution sizing caps default low.
+    assert settings.max_order_notional_dollars == Decimal("100")
+    assert settings.require_balance_preflight is True
+    assert settings.execution_dry_run is True
 
 
 def test_secrets_are_masked_in_repr() -> None:

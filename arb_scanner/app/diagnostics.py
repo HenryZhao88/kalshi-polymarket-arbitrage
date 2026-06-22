@@ -55,9 +55,7 @@ class Expectation:
     def parse(cls, text: str) -> Expectation:
         match = _EXPECTATION_RE.match(text)
         if not match:
-            raise ValueError(
-                f"unparseable expectation {text!r}; use NAME{{=,>=,<=,>,<}}INT"
-            )
+            raise ValueError(f"unparseable expectation {text!r}; use NAME{{=,>=,<=,>,<}}INT")
         return cls(match.group(1), match.group(2), int(match.group(3)))
 
 
@@ -110,9 +108,7 @@ def evaluate_expectations(text: str, expectations: list[Expectation]) -> list[Ch
             # A conflict bucket absent from a present histogram fired 0 times.
             results.append(CheckResult(expectation, 0, "histogram"))
         else:
-            results.append(
-                CheckResult(expectation, text.count(expectation.name), "occurrences")
-            )
+            results.append(CheckResult(expectation, text.count(expectation.name), "occurrences"))
     return results
 
 

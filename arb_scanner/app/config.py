@@ -29,6 +29,31 @@ class Settings(BaseSettings):
     # (clients/geoblock.py) before any Polymarket order path is enabled.
     mode: Mode = Mode.DISCOVERY_ONLY
 
+    # --- Execution gates (all fail closed) -------------------------------
+    # Placing a real order requires EVERY one of these to be satisfied:
+    #   1. mode == EXECUTION_ENABLED          (above)
+    #   2. live_order_placement == True       (this explicit second switch)
+    #   3. a passing runtime geoblock check   (clients/geoblock.py, call-time)
+    #   4. the kill switch is clear           (risk/kill_switch.py)
+    #   5. per-order notional <= the cap below
+    #   6. a successful balance preflight unless require_balance_preflight off
+    # Missing any one of these means no order is placed. There is intentionally
+    # no single flag that enables trading on its own.
+    live_order_placement: bool = False
+    #: When True (default) the executor logs the orders it WOULD place and the
+    #: gate decisions, but never calls a venue order endpoint. Set False only
+    #: after live_order_placement and the geoblock check both pass for you.
+    execution_dry_run: bool = True
+    #: Hard cap on a single leg's notional (price × size) in dollars. The
+    #: executor refuses any leg above this regardless of other limits.
+    max_order_notional_dollars: Decimal = Field(default=Decimal("100"), ge=0)
+    #: Refuse to trade unless a balance check on both venues confirms funds to
+    #: cover the locked capital first.
+    require_balance_preflight: bool = True
+    #: Limit-order price padding (in probability, 0–1) added to the taker VWAP
+    #: so a marketable limit crosses without paying through the whole book.
+    execution_limit_price_pad: Decimal = Field(default=Decimal("0.01"), ge=0, le=Decimal("0.5"))
+
     database_url: str = "sqlite+aiosqlite:///arb_scanner.db"
     persist_scans: bool = True
     persist_raw_candidates: bool = False

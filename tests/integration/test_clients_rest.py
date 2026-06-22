@@ -10,14 +10,16 @@ import aiohttp
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
-from arb_scanner.app.clients.base import NotFoundError, RateLimitedError, VenueError
+from arb_scanner.app.clients.base import AuthError, NotFoundError, RateLimitedError, VenueError
 from arb_scanner.app.clients.geoblock import (
     ExecutionDisabledError,
     GeoblockClient,
     ensure_execution_allowed,
 )
-from arb_scanner.app.clients.kalshi_rest import KalshiRestClient
+from arb_scanner.app.clients.kalshi_rest import KalshiRestClient, KalshiSigner
 from arb_scanner.app.clients.polymarket_clob import PolymarketClobClient
 from arb_scanner.app.clients.polymarket_gamma import PolymarketGammaClient
 from arb_scanner.app.config import Mode, Settings
@@ -149,6 +151,102 @@ class TestKalshiRest:
         kalshi = await make_kalshi(aiohttp_client)
         result = await kalshi.get_series_fee_changes()
         assert "series_fee_change_arr" in result
+
+
+def _signer() -> KalshiSigner:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    return KalshiSigner("test-key-id", pem)
+
+
+class TestKalshiOrders:
+    async def test_private_endpoint_without_signer_raises_auth_error(
+        self, aiohttp_client: AiohttpClientFn
+    ) -> None:
+        # No network should be touched: the missing-signer guard fails closed.
+        app = web.Application()
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(client.session, base_url=str(client.make_url("")))
+        with pytest.raises(AuthError):
+            await kalshi.get_balance()
+
+    async def test_create_order_signs_and_sends_body(self, aiohttp_client: AiohttpClientFn) -> None:
+        received: dict[str, Any] = {}
+
+        async def create(request: web.Request) -> web.Response:
+            received["headers"] = dict(request.headers)
+            received["body"] = await request.json()
+            return web.json_response(
+                {"order": {"order_id": "ord-1", "status": "resting"}}, status=201
+            )
+
+        app = web.Application()
+        app.router.add_post("/trade-api/v2/portfolio/orders", create)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(
+            client.session, base_url=str(client.make_url("")), signer=_signer()
+        )
+        result = await kalshi.create_order(
+            ticker="KXBTC-26JUN30-T70000",
+            side="yes",
+            action="buy",
+            count=10,
+            yes_price_cents=42,
+            client_order_id="abc123",
+        )
+        assert result["order"]["order_id"] == "ord-1"
+        # The request was signed and carried the structured order body.
+        assert received["headers"]["KALSHI-ACCESS-KEY"] == "test-key-id"
+        assert "KALSHI-ACCESS-SIGNATURE" in received["headers"]
+        assert received["body"] == {
+            "ticker": "KXBTC-26JUN30-T70000",
+            "side": "yes",
+            "action": "buy",
+            "count": 10,
+            "type": "limit",
+            "yes_price": 42,
+            "client_order_id": "abc123",
+        }
+
+    async def test_get_balance_returns_cents(self, aiohttp_client: AiohttpClientFn) -> None:
+        async def balance(request: web.Request) -> web.Response:
+            assert "KALSHI-ACCESS-SIGNATURE" in request.headers
+            return web.json_response({"balance": 123456})
+
+        app = web.Application()
+        app.router.add_get("/trade-api/v2/portfolio/balance", balance)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(
+            client.session, base_url=str(client.make_url("")), signer=_signer()
+        )
+        result = await kalshi.get_balance()
+        assert result["balance"] == 123456
+
+    async def test_cancel_order_uses_delete(self, aiohttp_client: AiohttpClientFn) -> None:
+        seen: dict[str, str] = {}
+
+        async def cancel(request: web.Request) -> web.Response:
+            seen["method"] = request.method
+            seen["order_id"] = request.match_info["order_id"]
+            return web.json_response({"order": {"order_id": "ord-1", "status": "canceled"}})
+
+        app = web.Application()
+        app.router.add_delete("/trade-api/v2/portfolio/orders/{order_id}", cancel)
+        client = await aiohttp_client(app)
+        assert client.session is not None
+        kalshi = KalshiRestClient(
+            client.session, base_url=str(client.make_url("")), signer=_signer()
+        )
+        result = await kalshi.cancel_order("ord-1")
+        assert seen == {"method": "DELETE", "order_id": "ord-1"}
+        assert result["order"]["status"] == "canceled"
 
 
 class TestRetries:

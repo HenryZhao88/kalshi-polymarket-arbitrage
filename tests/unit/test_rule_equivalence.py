@@ -195,15 +195,12 @@ class TestSettlementBasisConflict:
         assert settlement_basis_conflict(sworn_text, sworn_text) is None
 
     def test_ambiguous_kalshi_text_with_both_bases_does_not_fire(self) -> None:
-        both = (
-            "Resolves when the winner of the 2026 election is inaugurated as governor."
-        )
+        both = "Resolves when the winner of the 2026 election is inaugurated as governor."
         assert settlement_basis_conflict(both, POLY_GOVERNOR_RULES) is None
 
     def test_ambiguous_poly_text_with_both_bases_does_not_fire(self) -> None:
         both = (
-            "Resolves according to the winner of the 2026 election, "
-            "once that person is sworn in."
+            "Resolves according to the winner of the 2026 election, once that person is sworn in."
         )
         assert settlement_basis_conflict(KALSHI_GOVPARTY_RULES, both) is None
 
@@ -244,8 +241,7 @@ KALSHI_SWEEP_RULES = (
     "Georgia, Michigan, North Carolina, AND Maine, then the market resolves to Yes."
 )
 POLY_NC_SENATE_RULES = (
-    "This market will resolve according to the winner of the 2026 North Carolina "
-    "Senate race."
+    "This market will resolve according to the winner of the 2026 North Carolina Senate race."
 )
 
 
@@ -284,9 +280,7 @@ class TestOfficeLevelConflict:
         assert office_level_conflict(POLY_US_SENATE_RULES, POLY_US_SENATE_RULES) is None
 
     def test_state_senate_vs_state_senate_is_not_rejected(self) -> None:
-        assert (
-            office_level_conflict(KALSHI_STATE_SENATE_RULES, KALSHI_STATE_SENATE_RULES) is None
-        )
+        assert office_level_conflict(KALSHI_STATE_SENATE_RULES, KALSHI_STATE_SENATE_RULES) is None
 
     def test_ambiguous_senate_with_no_level_evidence_falls_through(self) -> None:
         ambiguous = "Resolves according to the winner of the North Carolina Senate race."
@@ -312,9 +306,7 @@ class TestOfficeLevelConflict:
         assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.ACCEPTED
 
     def test_text_with_both_levels_is_ambiguous_and_falls_through(self) -> None:
-        both = (
-            "Covers the State Senate as well as the U.S. Senate race in North Carolina."
-        )
+        both = "Covers the State Senate as well as the U.S. Senate race in North Carolina."
         assert office_level_conflict(both, POLY_US_SENATE_RULES) is None
 
 
@@ -585,8 +577,7 @@ class TestCryptoPerformanceVsPriceThresholdConflict:
     def test_requires_crypto_asset_on_both_sides(self) -> None:
         non_crypto = "Will October be the best month for the S&P 500 in 2026?"
         assert (
-            crypto_performance_vs_price_threshold_conflict(KALSHI_BTC_THRESHOLD, non_crypto)
-            is None
+            crypto_performance_vs_price_threshold_conflict(KALSHI_BTC_THRESHOLD, non_crypto) is None
         )
 
 
@@ -609,9 +600,7 @@ class TestStockCloseVsIntramonthHighConflict:
                 void_policy=None,
             ),
         )
-        assert any(
-            "stock_close_vs_intramonth_high_conflict" in f for f in result.hard_failures
-        )
+        assert any("stock_close_vs_intramonth_high_conflict" in f for f in result.hard_failures)
         assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
 
     def test_fires_in_either_direction(self) -> None:
@@ -622,8 +611,7 @@ class TestStockCloseVsIntramonthHighConflict:
         # conflict, so it accepts with settlement risk flags for the human to
         # verify (source/void), never high-rejected.
         assert (
-            stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, POLY_SPX_FINAL_CLOSE)
-            is None
+            stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, POLY_SPX_FINAL_CLOSE) is None
         )
         result = validate_rules(
             kalshi_facts(
@@ -646,9 +634,7 @@ class TestStockCloseVsIntramonthHighConflict:
         assert stock_close_vs_intramonth_high_conflict(POLY_SPX_HIGH, POLY_SPX_HIGH) is None
 
     def test_close_vs_close_is_not_rejected(self) -> None:
-        assert (
-            stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, KALSHI_SPX_CLOSE) is None
-        )
+        assert stock_close_vs_intramonth_high_conflict(KALSHI_SPX_CLOSE, KALSHI_SPX_CLOSE) is None
 
     def test_requires_index_context_on_both_sides(self) -> None:
         no_index = "Will the value hit $8,200 (HIGH) in December at any point?"
@@ -744,15 +730,12 @@ class TestVoidPolicyConflict:
 
     def test_fires_in_either_direction(self) -> None:
         assert (
-            void_policy_conflict(POLY_RESOLVES_TO_OTHER, KALSHI_FAIR_VALUE_CANCELLATION)
-            is not None
+            void_policy_conflict(POLY_RESOLVES_TO_OTHER, KALSHI_FAIR_VALUE_CANCELLATION) is not None
         )
 
     def test_same_fair_value_policy_does_not_conflict(self) -> None:
         assert (
-            void_policy_conflict(
-                KALSHI_FAIR_VALUE_CANCELLATION, KALSHI_FAIR_VALUE_CANCELLATION
-            )
+            void_policy_conflict(KALSHI_FAIR_VALUE_CANCELLATION, KALSHI_FAIR_VALUE_CANCELLATION)
             is None
         )
 
@@ -813,13 +796,13 @@ KALSHI_SPX_SNAPSHOT = (
 )
 POLY_SPX_OFFICIAL_CLOSE = (
     "Will S&P 500 (SPX) close over $8,000 on the final trading day of December 2026?\n"
-    "This market will resolve to \"Yes\" if the official closing price for "
+    'This market will resolve to "Yes" if the official closing price for '
     "S&P 500 (SPX) on the final trading day of December 2026 is higher than "
     "the listed price. If no official closing price is published for that "
     "session, the market will use the last valid on-exchange trade price of "
     "the regular session as the effective closing price. The resolution "
     "source for this market is Yahoo Finance, specifically the S&P 500 (SPX) "
-    "\"Close\" prices available under \"Historical Prices.\""
+    '"Close" prices available under "Historical Prices."'
 )
 
 
@@ -978,18 +961,14 @@ class TestCandidateSetConflict:
         assert decide_status(similarity_score=0.95, rules=result) is MatchStatus.REJECTED
 
     def test_fires_in_either_direction(self) -> None:
-        assert (
-            candidate_set_conflict(POLY_INCUMBENT_COHORT, KALSHI_PROGRESSIVE_SLATE) is not None
-        )
+        assert candidate_set_conflict(POLY_INCUMBENT_COHORT, KALSHI_PROGRESSIVE_SLATE) is not None
 
     def test_different_named_slates_are_rejected(self) -> None:
         other_slate = KALSHI_PROGRESSIVE_SLATE.replace("Juliana Stratton", "Alex Johnson")
         assert candidate_set_conflict(KALSHI_PROGRESSIVE_SLATE, other_slate) is not None
 
     def test_identical_slates_are_not_rejected(self) -> None:
-        assert (
-            candidate_set_conflict(KALSHI_PROGRESSIVE_SLATE, KALSHI_PROGRESSIVE_SLATE) is None
-        )
+        assert candidate_set_conflict(KALSHI_PROGRESSIVE_SLATE, KALSHI_PROGRESSIVE_SLATE) is None
 
     def test_one_side_missing_slate_without_cohort_is_mismatch_not_rejection(self) -> None:
         vague_sweep = (
@@ -1046,12 +1025,10 @@ POLY_K_LEADER = (
 )
 POLY_TRADED = "Will Brian Thomas Jr. be traded?"
 KALSHI_REC_YDS_THRESHOLD = (
-    "Will Brian Thomas Jr. record 1000+ receiving yards during 2026-27 Pro Football "
-    "regular season?"
+    "Will Brian Thomas Jr. record 1000+ receiving yards during 2026-27 Pro Football regular season?"
 )
 KALSHI_REC_YDS_LEADER = (
-    "Will Brian Thomas Jr. lead Pro Football in Receiving Yards for the 2026-2027 "
-    "regular season?"
+    "Will Brian Thomas Jr. lead Pro Football in Receiving Yards for the 2026-2027 regular season?"
 )
 
 
@@ -1081,9 +1058,7 @@ class TestPlayerPropKind:
         assert player_prop_kind("Will Boston beat New York?") is None
 
     def test_multiple_kinds_are_ambiguous(self) -> None:
-        assert (
-            player_prop_kind("Will Yamamoto win NL MVP and lead Pro Baseball in wins?") is None
-        )
+        assert player_prop_kind("Will Yamamoto win NL MVP and lead Pro Baseball in wins?") is None
 
 
 class TestPlayerPropScopeConflict:
@@ -1163,9 +1138,7 @@ POLY_CB_INCREASE = (
     "Increase if the rate is raised, Decrease if the rate is lowered, and No "
     "Change otherwise."
 )
-POLY_CB_DECREASE = POLY_CB_INCREASE.replace(
-    "announce an increase", "announce a decrease"
-)
+POLY_CB_DECREASE = POLY_CB_INCREASE.replace("announce an increase", "announce a decrease")
 
 
 class TestCentralBankDecision:
@@ -1187,8 +1160,7 @@ class TestCentralBankDecision:
 
     def test_ambiguous_title_and_rules_extract_nothing(self) -> None:
         ambiguous = (
-            "Bank of Mexico June decision?\nResolves to Increase if raised, "
-            "Decrease if lowered."
+            "Bank of Mexico June decision?\nResolves to Increase if raised, Decrease if lowered."
         )
         assert central_bank_decision(ambiguous) is None
 

@@ -225,9 +225,7 @@ def verification_checklist(record: dict[str, Any]) -> dict[str, bool]:
     only enumerate what a human must verify before trusting a match.
     """
     missing = {str(item) for item in record.get("missing_fields") or []}
-    conflict_text = " | ".join(
-        str(item) for item in record.get("conflicting_fields") or []
-    ).lower()
+    conflict_text = " | ".join(str(item) for item in record.get("conflicting_fields") or []).lower()
     poly_determination = record.get("polymarket_resolution_time") or record.get(
         "polymarket_end_time"
     )
@@ -318,28 +316,22 @@ def pair_record(row: MatchedPairRow) -> dict[str, Any]:
     poly = excerpts.get("polymarket") or {}
     differing = row.differing_fields or {}
     conflicting = [
-        str(value)
-        for key, value in differing.items()
-        if key.startswith(("conflict_", "rule_"))
+        str(value) for key, value in differing.items() if key.startswith(("conflict_", "rule_"))
     ]
     mismatched = {
-        key: value
-        for key, value in differing.items()
-        if not key.startswith(("conflict_", "rule_"))
+        key: value for key, value in differing.items() if not key.startswith(("conflict_", "rule_"))
     }
     reasons = details.get("status_reasons") or row.rule_warnings or []
     hypothetical = details.get("hypothetical_economics")
-    token_ids = [
-        token for token in (row.poly_yes_token_id, row.poly_no_token_id) if token
-    ] or list(poly.get("token_ids") or [])
+    token_ids = [token for token in (row.poly_yes_token_id, row.poly_no_token_id) if token] or list(
+        poly.get("token_ids") or []
+    )
     record: dict[str, Any] = {
         "status": row.status,
         "confidence": row.confidence,
         "reason": "; ".join(str(reason) for reason in reasons),
         "not_trade_safe_label": NOT_TRADE_SAFE_LABEL,
-        "fee_confidence": details.get("fee_confidence")
-        or poly.get("fee_confidence")
-        or "unknown",
+        "fee_confidence": details.get("fee_confidence") or poly.get("fee_confidence") or "unknown",
         "hypothetical_edge_status": (
             "not_computed" if hypothetical is None else "computed_hypothetical_only"
         ),
@@ -408,8 +400,7 @@ def _evidence_confidence_summary(details: dict[str, Any]) -> str:
         ("entity", "kalshi_outcome_entity_evidence", "poly_outcome_entity_evidence"),
     ]
     parts = [
-        f"{label}={_confidence_of(details.get(kalshi_key))}/"
-        f"{_confidence_of(details.get(poly_key))}"
+        f"{label}={_confidence_of(details.get(kalshi_key))}/{_confidence_of(details.get(poly_key))}"
         for label, kalshi_key, poly_key in pairs
     ]
     parts.append(f"fee={details.get('fee_confidence') or 'unknown'}")
@@ -418,9 +409,7 @@ def _evidence_confidence_summary(details: dict[str, Any]) -> str:
 
 def blocking_summary_lines(record: dict[str, Any]) -> list[str]:
     """Render the triage block for text reports and verification packets."""
-    label = (
-        NOT_TRADE_SAFE_LABEL if record.get("status") != "accepted" else "accepted"
-    )
+    label = NOT_TRADE_SAFE_LABEL if record.get("status") != "accepted" else "accepted"
     return [
         "  blocking summary:",
         f"    status: {label}",

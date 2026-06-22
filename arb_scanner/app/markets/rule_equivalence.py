@@ -309,9 +309,7 @@ _PRICE_THRESHOLD_TEXT_RE = re.compile(
 )
 
 
-def crypto_performance_vs_price_threshold_conflict(
-    kalshi_text: str, poly_text: str
-) -> str | None:
+def crypto_performance_vs_price_threshold_conflict(kalshi_text: str, poly_text: str) -> str | None:
     """Detect a crypto price-threshold market paired with a best-month market.
 
     A month name alone never fires: the performance side must show explicit
@@ -454,9 +452,7 @@ def player_prop_kind(text: str) -> str | None:
     if _PLAYER_TRANSACTION_RE.search(text):
         kinds.add("transaction")
     stats = [
-        name
-        for name, pattern in _STAT_LEADER_PATTERNS
-        if re.search(pattern, text, re.IGNORECASE)
+        name for name, pattern in _STAT_LEADER_PATTERNS if re.search(pattern, text, re.IGNORECASE)
     ]
     if len(stats) == 1:
         kinds.add(f"stat_leader:{stats[0]}")
@@ -553,9 +549,7 @@ def central_bank_direction_conflict(kalshi_text: str, poly_text: str) -> str | N
 # Polymarket: a tiebreak cascade (official leader, fewer innings, lower ERA,
 # fewer walks, alphabetical) always names a SINGLE winner. In an exact-tie
 # state the venues pay differently — a diagnostic blocker, never a rejection.
-_TIES_SPLIT_RE = re.compile(
-    r"\bproportional payout\b|\bsplit proportional\w*\b", re.IGNORECASE
-)
+_TIES_SPLIT_RE = re.compile(r"\bproportional payout\b|\bsplit proportional\w*\b", re.IGNORECASE)
 _SOLE_WINNER_TIEBREAK_RE = re.compile(
     r"\bif (?:a )?tie still persists\b|\bcomes first alphabetically\b|"
     r"\btie[- ]?break\w*\b",
@@ -715,9 +709,7 @@ def extract_candidate_slate(text: str) -> frozenset[frozenset[str]]:
     groups: list[frozenset[str]] = []
     for match in _CANDIDATE_GROUP_RE.finditer(text):
         alternatives = frozenset(
-            " ".join(name.lower().split())
-            for name in (match.group(1), match.group(2))
-            if name
+            " ".join(name.lower().split()) for name in (match.group(1), match.group(2)) if name
         )
         groups.append(alternatives)
     return frozenset(groups)
@@ -886,9 +878,7 @@ def validate_rules(kalshi: KalshiRuleFacts, poly: PolymarketRuleFacts) -> RuleEq
     kalshi_combined = (
         f"{kalshi.title}\n{kalshi.resolution_text}" if kalshi.title else kalshi.resolution_text
     )
-    poly_combined = (
-        f"{poly.title}\n{poly.resolution_text}" if poly.title else poly.resolution_text
-    )
+    poly_combined = f"{poly.title}\n{poly.resolution_text}" if poly.title else poly.resolution_text
     # Hard failures here prove the venues resolve on DIFFERENT EVENTS/QUESTIONS
     # (not merely different settlement mechanics) — buying both legs is not a
     # hedge, so the pair is rejected outright.

@@ -21,7 +21,13 @@ import aiohttp
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-from arb_scanner.app.clients.base import CircuitBreaker, RestClient, TokenBucket, VenueError
+from arb_scanner.app.clients.base import (
+    AuthError,
+    CircuitBreaker,
+    RestClient,
+    TokenBucket,
+    VenueError,
+)
 
 PROD_BASE_URL = "https://api.elections.kalshi.com"
 DEMO_BASE_URL = "https://demo-api.kalshi.co"
@@ -77,10 +83,31 @@ class KalshiRestClient:
     def _headers(self, method: str, path: str) -> dict[str, str] | None:
         return self._signer.headers(method, path) if self._signer else None
 
+    def _require_signer(self) -> KalshiSigner:
+        if self._signer is None:
+            raise AuthError(
+                "Kalshi private order/portfolio endpoints require a signer; set "
+                "ARB_KALSHI_API_KEY_ID and ARB_KALSHI_PRIVATE_KEY_PATH"
+            )
+        return self._signer
+
     async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         full_path = f"{API_PREFIX}{path}"
         return await self._rest.request_json(
             "GET", full_path, params=params, headers=self._headers("GET", full_path)
+        )
+
+    async def _signed(
+        self, method: str, path: str, *, json_body: dict[str, Any] | None = None
+    ) -> Any:
+        """Authenticated request to a private portfolio/order endpoint."""
+        self._require_signer()
+        full_path = f"{API_PREFIX}{path}"
+        return await self._rest.request_json(
+            method,
+            full_path,
+            json_body=json_body,
+            headers=self._headers(method, full_path),
         )
 
     async def get_exchange_status(self) -> dict[str, Any]:
@@ -159,4 +186,65 @@ class KalshiRestClient:
         result: dict[str, Any] = await self._get(
             "/series/fee_changes", {"show_historical": str(show_historical).lower()}
         )
+        return result
+
+    # --- Private portfolio / order endpoints (require a signer) ----------
+    # Endpoints per docs.kalshi.com/api-reference (trade-api/v2). Order
+    # placement is only reached from the gated executor; these methods are
+    # plain authenticated I/O and do not themselves enforce execution gates.
+
+    async def get_balance(self) -> dict[str, Any]:
+        """Portfolio balance in cents (`balance` field)."""
+        result: dict[str, Any] = await self._signed("GET", "/portfolio/balance")
+        return result
+
+    async def create_order(
+        self,
+        *,
+        ticker: str,
+        side: str,
+        action: str,
+        count: int,
+        order_type: str = "limit",
+        yes_price_cents: int | None = None,
+        no_price_cents: int | None = None,
+        client_order_id: str | None = None,
+        time_in_force: str | None = None,
+    ) -> dict[str, Any]:
+        """Place an order. `side` is "yes"/"no"; `action` is "buy"/"sell".
+
+        For a limit order supply the relevant side price in integer cents
+        (1–99). `client_order_id` makes retries idempotent on Kalshi's side.
+        """
+        body: dict[str, Any] = {
+            "ticker": ticker,
+            "side": side,
+            "action": action,
+            "count": count,
+            "type": order_type,
+        }
+        if yes_price_cents is not None:
+            body["yes_price"] = yes_price_cents
+        if no_price_cents is not None:
+            body["no_price"] = no_price_cents
+        if client_order_id is not None:
+            body["client_order_id"] = client_order_id
+        if time_in_force is not None:
+            body["time_in_force"] = time_in_force
+        result: dict[str, Any] = await self._signed("POST", "/portfolio/orders", json_body=body)
+        return result
+
+    async def cancel_order(self, order_id: str) -> dict[str, Any]:
+        result: dict[str, Any] = await self._signed("DELETE", f"/portfolio/orders/{order_id}")
+        return result
+
+    async def get_order(self, order_id: str) -> dict[str, Any]:
+        result: dict[str, Any] = await self._signed("GET", f"/portfolio/orders/{order_id}")
+        return result
+
+    async def get_fills(self, *, ticker: str | None = None) -> dict[str, Any]:
+        path = "/portfolio/fills"
+        if ticker:
+            path = f"{path}?ticker={ticker}"
+        result: dict[str, Any] = await self._signed("GET", path)
         return result

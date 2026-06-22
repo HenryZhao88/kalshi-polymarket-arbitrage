@@ -14,6 +14,7 @@ from arb_scanner.app.alerts.base import AlertPayload, AlertSink
 from arb_scanner.app.books.kalshi_book import KalshiBook
 from arb_scanner.app.books.polymarket_book import from_clob_payload
 from arb_scanner.app.books.snapshots import orderbook_snapshot_payload
+from arb_scanner.app.clients.base import VenueError
 from arb_scanner.app.economics import (
     CostAssumptions,
     OpportunityEvaluation,
@@ -38,11 +39,15 @@ from arb_scanner.app.markets.discovery import (
 from arb_scanner.app.markets.parsers import parse_features
 from arb_scanner.app.markets.polymarket import PolymarketMarket
 from arb_scanner.app.markets.rule_equivalence import MatchStatus
+from arb_scanner.app.markets.verification import (
+    VerificationInputs,
+    VerificationVerdict,
+    verify_pair,
+)
 from arb_scanner.app.risk.controls import OpportunityRisk, RiskLimits, check
 from arb_scanner.app.risk.exposure import ExposureTracker
 from arb_scanner.app.risk.kill_switch import KillSwitch
 from arb_scanner.app.types import OrderBook, Side, Venue
-from arb_scanner.app.markets.verification import verify_pair, VerificationInputs
 
 log = logging.getLogger("arb_scanner.scanner")
 
@@ -114,6 +119,7 @@ class ScanReport:
     rejected_candidates: int = 0
     pairs_considered: int = 0
     pairs_accepted: int = 0
+    book_fetch_failures: int = 0
     verification_verdicts: Counter[str] = field(default_factory=Counter)
     rejection_reasons: Counter[str] = field(default_factory=Counter)
     manual_review_pairs: list[MatchedPair] = field(default_factory=list)
@@ -135,7 +141,8 @@ class ScanReport:
                 f"candidate funnel: raw_title={self.raw_title_candidates} "
                 f"structured={self.structured_candidates} "
                 f"manual_review={self.manual_review_candidates} "
-                f"accepted={self.pairs_accepted} rejected={self.rejected_candidates}"
+                f"accepted={self.pairs_accepted} rejected={self.rejected_candidates} "
+                f"book_fetch_failures={self.book_fetch_failures}"
             ),
         ]
         if self.verification_verdicts:
@@ -546,15 +553,29 @@ async def scan_once(
                 continue
             report.pairs_accepted += 1
 
-            kalshi_payload = await kalshi.get_orderbook(pair.kalshi_ticker)
-            captured_ms = int(scan_time.timestamp() * 1000)
-            kalshi_book = KalshiBook.from_rest_payload(
-                pair.kalshi_ticker, kalshi_payload, timestamp_ms=captured_ms
-            )
-            kalshi_yes = kalshi_book.view(Side.YES)
-            kalshi_no = kalshi_book.view(Side.NO)
-            poly_yes = from_clob_payload(await clob.get_book(pair.poly_yes_token_id), Side.YES)
-            poly_no = from_clob_payload(await clob.get_book(pair.poly_no_token_id), Side.NO)
+            # A single accepted pair must never abort the whole pass. Markets go
+            # un-bookable between discovery and the book fetch (a Polymarket
+            # token can 404 "No orderbook exists", a Kalshi market can close),
+            # so a venue error on one pair's books is logged and skipped.
+            try:
+                kalshi_payload = await kalshi.get_orderbook(pair.kalshi_ticker)
+                captured_ms = int(scan_time.timestamp() * 1000)
+                kalshi_book = KalshiBook.from_rest_payload(
+                    pair.kalshi_ticker, kalshi_payload, timestamp_ms=captured_ms
+                )
+                kalshi_yes = kalshi_book.view(Side.YES)
+                kalshi_no = kalshi_book.view(Side.NO)
+                poly_yes = from_clob_payload(await clob.get_book(pair.poly_yes_token_id), Side.YES)
+                poly_no = from_clob_payload(await clob.get_book(pair.poly_no_token_id), Side.NO)
+            except VenueError as exc:
+                report.book_fetch_failures += 1
+                log.warning(
+                    "skipping pair %s <> %s: order-book fetch failed (%s)",
+                    pair.kalshi_ticker,
+                    pair.poly_condition_id[:14],
+                    type(exc).__name__,
+                )
+                continue
             books = (kalshi_yes, kalshi_no, poly_yes, poly_no)
 
             category = _market_category(p_market)
@@ -645,9 +666,7 @@ async def scan_once(
                             pass
                     elif poly_end_time:
                         try:
-                            poly_time = datetime.fromisoformat(
-                                poly_end_time.replace("Z", "+00:00")
-                            )
+                            poly_time = datetime.fromisoformat(poly_end_time.replace("Z", "+00:00"))
                         except ValueError:
                             pass
 
@@ -660,7 +679,9 @@ async def scan_once(
 
                     verification_report = verify_pair(pair.rule_warnings, inputs)
                     verification_verdict = verification_report.verdict.value
-                    unresolved_flags = verification_report.unresolved()
+                    unresolved_flags = tuple(
+                        check.flag for check in verification_report.unresolved()
+                    )
 
                     # Update verification statistics
                     report.verification_verdicts[verification_verdict] += 1

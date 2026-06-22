@@ -19,6 +19,12 @@ dependencies = [
     "cryptography>=43.0",
 ]
 
+[project.optional-dependencies]
+# Live Polymarket order signing (EIP-712) is delegated to the official client;
+# install with `uv sync --extra execution`. Discovery never needs this, and the
+# execution path fails closed if it is absent.
+execution = ["py-clob-client>=0.17"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.3",

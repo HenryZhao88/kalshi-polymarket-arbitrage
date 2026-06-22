@@ -612,8 +612,7 @@ class TestEvaluatePairEndToEnd:
         # election-winner basis; those stay with the existing conservative checks.
         kalshi, poly = self.govparty_style_markets()
         kalshi["rules_primary"] = (
-            "Resolves according to the winner of the 2026 South Carolina "
-            "gubernatorial election."
+            "Resolves according to the winner of the 2026 South Carolina gubernatorial election."
         )
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
@@ -674,9 +673,7 @@ class TestEvaluatePairEndToEnd:
         pair = evaluate_pair(kalshi, poly)
         assert pair is not None
         assert pair.status is MatchStatus.REJECTED
-        assert any(
-            "sports_stage_vs_winner_conflict" in reason for reason in pair.status_reasons
-        )
+        assert any("sports_stage_vs_winner_conflict" in reason for reason in pair.status_reasons)
 
     def test_wc_continent_pair_surfaces_void_policy_mismatch(self) -> None:
         # The verified KXWCCONTINENT-26-SA pair: normal-state outcomes
@@ -774,8 +771,7 @@ class TestEvaluatePairEndToEnd:
         kalshi = {
             "ticker": "KXDEMPROGRESSIVESENATESWEEP-26NOV03",
             "title": (
-                "Will the listed Democratic Senate candidates all win their "
-                "primary elections?"
+                "Will the listed Democratic Senate candidates all win their primary elections?"
             ),
             "expected_expiration_time": "2026-11-03T15:00:00Z",
             "rules_primary": (
@@ -870,9 +866,7 @@ class TestEvaluatePairEndToEnd:
         }
         poly: dict[str, object] = {
             "conditionId": "0xdcmayor",
-            "question": (
-                f"Will {poly_candidate} win the 2026 Democratic D.C. Mayoral Primary?"
-            ),
+            "question": (f"Will {poly_candidate} win the 2026 Democratic D.C. Mayoral Primary?"),
             "clobTokenIds": '["111", "222"]',
             "endDate": "2026-06-16T15:00:00Z",
         }

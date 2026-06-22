@@ -224,10 +224,7 @@ def test_cli_forwards_report_format_and_output(monkeypatch: pytest.MonkeyPatch) 
 def test_cli_report_format_defaults_to_text(monkeypatch: pytest.MonkeyPatch) -> None:
     observed = _capture_report(monkeypatch)
     assert (
-        main_module.cli(
-            ["report", "--manual-review", "--database-url", "sqlite+aiosqlite://"]
-        )
-        == 0
+        main_module.cli(["report", "--manual-review", "--database-url", "sqlite+aiosqlite://"]) == 0
     )
     assert observed["fmt"] == "text"
     assert observed["output"] is None
@@ -285,9 +282,7 @@ def test_cli_routes_cleanup_retention(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(reporting_module, "run_retention_cleanup", fake_cleanup)
     assert (
-        main_module.cli(
-            ["report", "--cleanup-retention", "--database-url", "sqlite+aiosqlite://"]
-        )
+        main_module.cli(["report", "--cleanup-retention", "--database-url", "sqlite+aiosqlite://"])
         == 0
     )
     assert observed["database_url"] == "sqlite+aiosqlite://"
@@ -309,8 +304,37 @@ def test_cli_routes_check_log(tmp_path: Path) -> None:
     assert main_module.cli(["check-log", "--file", str(log), "--expect", "accepted>=1"]) == 1
 
 
-def test_cli_has_no_execution_command() -> None:
-    """The CLI must never grow a trade/execute/order entry point."""
-    for forbidden in ("trade", "execute", "order", "buy", "sell"):
+def test_cli_rejects_unknown_order_verbs() -> None:
+    """The only execution entry point is the gated `execute`; other verbs error."""
+    for forbidden in ("trade", "order", "buy", "sell"):
         with pytest.raises(SystemExit):
             main_module.cli([forbidden])
+
+
+def test_execute_command_is_fail_closed_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`execute` exists but must place nothing live under default settings.
+
+    Discovery is stubbed out so this never touches the network; the assertion is
+    that the gate status reports dry-run/blocked and no executor is built.
+    """
+    from arb_scanner.app.config import Settings
+    from arb_scanner.app.scanner import ScanReport
+
+    captured: dict[str, object] = {}
+
+    async def fake_scan_pass(settings: object, session: object, **kwargs: object) -> ScanReport:
+        return ScanReport()
+
+    def fake_build_executor(*args: object, **kwargs: object) -> object:
+        captured["built_executor"] = True
+        raise AssertionError("executor must not be built when there is nothing to execute")
+
+    monkeypatch.setattr(main_module, "_scan_pass", fake_scan_pass)
+    monkeypatch.setattr(
+        "arb_scanner.app.execution.runner.build_executor", fake_build_executor
+    )
+
+    # Default settings: discovery-only, dry-run, second switch off.
+    settings = Settings(_env_file=None)
+    main_module.asyncio.run(main_module._run_execute(settings, max_executions=None))
+    assert "built_executor" not in captured

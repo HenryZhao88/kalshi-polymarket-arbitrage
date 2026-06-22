@@ -172,6 +172,57 @@ async def _run_pass(
             print("no accepted pairs produced evaluable opportunities this pass")
 
 
+async def _run_execute(settings: Settings, *, max_executions: int | None) -> None:
+    """Discovery pass → gated executor. Fail-closed and dry-run by default."""
+    from arb_scanner.app.execution.runner import (
+        build_executor,
+        execute_alertable_opportunities,
+        gate_status,
+        kalshi_signer_from_settings,
+    )
+
+    kill_switch = _build_kill_switch(settings)
+    signer = kalshi_signer_from_settings(settings)
+    status = gate_status(settings, kill_switch, kalshi_signer=signer)
+    for line in status.render_lines():
+        print(line)
+
+    async with aiohttp.ClientSession() as session:
+        report = await _scan_pass(
+            settings,
+            session,
+            sinks=_build_sinks(settings, session, allow_external=False),
+            exposure=ExposureTracker(),
+            kill_switch=kill_switch,
+        )
+        for line in report.render_lines():
+            print(line)
+        alertable = [opp for opp in report.opportunities if not opp[2]]
+        print(f"alertable opportunities this pass: {len(alertable)}")
+        if not alertable:
+            print("nothing to execute")
+            return
+        executor = build_executor(
+            settings,
+            session,
+            kill_switch=kill_switch,
+            kalshi_signer=signer,
+        )
+        records = await execute_alertable_opportunities(
+            executor,
+            report,
+            price_pad=settings.execution_limit_price_pad,
+            max_executions=max_executions,
+        )
+        for record in records:
+            line = f"execution: {record.outcome.value}"
+            if record.reasons:
+                line += f" | {'; '.join(record.reasons)}"
+            if record.notes:
+                line += f" | {'; '.join(record.notes)}"
+            print(line)
+
+
 async def _scan_loop(settings: Settings, interval_seconds: float) -> None:
     exposure = ExposureTracker()
     kill_switch = _build_kill_switch(settings)
@@ -209,6 +260,18 @@ def cli(argv: list[str] | None = None) -> int:
         choices=[mode.value for mode in ManualReviewSort],
         default=ManualReviewSort.SIMILARITY.value,
         help="ranking for unsafe manual-review output",
+    )
+    execute = sub.add_parser(
+        "execute",
+        help="discovery pass then route alertable opportunities through the GATED "
+        "executor (dry-run and fail-closed unless explicitly enabled)",
+    )
+    execute.add_argument(
+        "--max-executions",
+        type=int,
+        default=None,
+        metavar="N",
+        help="cap the number of opportunities routed this pass (default: all)",
     )
     replay = sub.add_parser("replay", help="re-evaluate stored paired opportunity snapshots")
     replay.add_argument("--database-url", default=None)
@@ -266,11 +329,7 @@ def cli(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
-    if (
-        args.command == "report"
-        and args.verification_packet
-        and args.report_format != "text"
-    ):
+    if args.command == "report" and args.verification_packet and args.report_format != "text":
         parser.error("--verification-packet renders text only; drop --format")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     settings = Settings()
@@ -290,6 +349,9 @@ def cli(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "scan":
         asyncio.run(_scan_loop(settings, args.interval))
+        return 0
+    if args.command == "execute":
+        asyncio.run(_run_execute(settings, max_executions=args.max_executions))
         return 0
     if args.command == "check-log":
         from arb_scanner.app.diagnostics import run_check_log

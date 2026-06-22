@@ -4,8 +4,9 @@ Kalshi-Polymarket arbitrage discovery prototype. It reads public market data,
 matches candidate markets, evaluates both buy/buy directions against book depth,
 applies fees and configured costs, persists evidence, and can emit alerts.
 
-This project does not place orders and makes no profitability claim. Live order
-routing ends in `NotImplementedError`; discovery-only is the shipped default.
+Discovery-only is the shipped default and makes no profitability claim. A live
+two-leg execution path now exists but is **hard-disabled behind layered gates**
+(see "Live execution" below); out of the box it places no orders.
 
 ## Current status
 
@@ -137,6 +138,7 @@ uv run arb-scanner report --manual-review --limit 20 --sort missing_fields
 uv run arb-scanner report --rejections --limit 20
 uv run arb-scanner replay
 uv run arb-scanner report --out reports/report.html
+uv run arb-scanner execute            # GATED: prints gate status, dry-run by default
 ```
 
 Every dry-run prints discovered/scannable venue counts and the raw-title,
@@ -236,15 +238,50 @@ before treating an alert as an opportunity.
 `replay` and `report` require complete paired snapshots produced by a persisted scan.
 Legacy isolated order-book rows fail with an actionable message.
 
+## Live execution
+
+A real two-leg executor exists (`arb_scanner/app/execution/`) but is engineered
+to do **nothing** until you deliberately open every gate. There is intentionally
+no single "enable trading" switch. To go live you must, in order:
+
+1. `ARB_MODE=execution-enabled`
+2. `ARB_LIVE_ORDER_PLACEMENT=true` (the explicit second switch)
+3. Provide credentials: Kalshi (`ARB_KALSHI_API_KEY_ID` + `ARB_KALSHI_PRIVATE_KEY_PATH`)
+   and, for the Polymarket leg, `uv sync --extra execution` plus
+   `ARB_POLYMARKET_PRIVATE_KEY` (EIP-712 order signing is delegated to the
+   official `py-clob-client`; the leg fails closed if it is absent).
+4. Be outside the Polymarket geoblock (a live runtime check must return
+   `blocked=false`; the US is blocked and the project does not bypass it).
+5. Keep `.arb-scanner.kill` absent and each leg's notional under
+   `ARB_MAX_ORDER_NOTIONAL_DOLLARS` (default \$100); a balance preflight on both
+   venues must cover the leg unless `ARB_REQUIRE_BALANCE_PREFLIGHT=false`.
+6. **Finally**, set `ARB_EXECUTION_DRY_RUN=false`. While it is `true` (the
+   default), the executor computes and logs the exact orders it would send but
+   never calls a venue endpoint.
+
+Inspect the standing gates without touching the network beyond discovery:
+
+```bash
+uv run arb-scanner execute                 # prints the gate report, then plans
+uv run arb-scanner execute --max-executions 1
+```
+
+The executor places leg 1, confirms its fill before placing leg 2, and on a
+leg-2 failure attempts to **unwind** leg 1 (cancel any remainder, sell back the
+filled portion). If the unwind itself fails it reports a `leg1_only_naked`
+outcome loudly. This reduces, but cannot eliminate, cross-venue legging risk —
+treat live trading as experimental and start with the smallest possible caps.
+
 ## Safety
 
-- `discovery-only` is the default.
-- There is no order-placement implementation.
-- The router checks mode and Polymarket eligibility, then deliberately raises
-  `NotImplementedError`.
-- The CLI never invokes the router.
+- `discovery-only` is the default; live execution requires opening every gate above.
+- Order placement runs through one choke point (`execution/executor.py`); it
+  re-checks mode, the second switch, the kill switch, the runtime geoblock, the
+  per-leg notional cap, and a balance preflight on every attempt, failing closed.
+- `ARB_EXECUTION_DRY_RUN=true` (default) plans and logs orders without sending them.
 - Manual-review and rejected candidates never reach order-book economics or routing.
-- Creating `.arb-scanner.kill` blocks alerts in both scan and dry-run paths.
+- Only verifier-cleared, fully-gated alertable opportunities are eligible for execution.
+- Creating `.arb-scanner.kill` blocks alerts and execution in every path.
 - US Polymarket order placement is geoblocked; the project does not bypass that control.
 
 ## Docker

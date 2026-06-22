@@ -31,7 +31,7 @@ POLY_ELECTION_SOURCE = (
 KALSHI_AP_SOURCE = "This market resolves according to the Associated Press call."
 POLY_SPX_SOURCE = (
     "The resolution source for this market is Yahoo Finance, specifically the "
-    "S&P 500 (SPX) \"Close\" prices available under \"Historical Prices.\""
+    'S&P 500 (SPX) "Close" prices available under "Historical Prices."'
 )
 KALSHI_BTC_COINDESK = "Settles from the Coindesk BTC price index at 16:00 UTC."
 POLY_BTC_BINANCE = "This market resolves based on the Binance BTCUSDT price."

@@ -134,8 +134,7 @@ class TestPairRecord:
         assert record["polymarket_slug"] == "republicans-sc-governor-2026"
         assert record["polymarket_token_ids"] == ["111", "222"]
         assert (
-            record["polymarket_url"]
-            == "https://polymarket.com/event/south-carolina-governor-2026"
+            record["polymarket_url"] == "https://polymarket.com/event/south-carolina-governor-2026"
         )
         # No public Kalshi URL is derivable from a ticker; identifiers only.
         assert "kalshi_url" not in record
@@ -157,8 +156,7 @@ class TestPairRecord:
             "verify determination/settlement timing on both venues"
         )
         assert record["evidence_confidence_summary"] == (
-            "type=none/none date=none/none threshold=none/none entity=none/none "
-            "fee=market_metadata"
+            "type=none/none date=none/none threshold=none/none entity=none/none fee=market_metadata"
         )
         with_evidence = make_row(
             matched_fields={
@@ -189,20 +187,16 @@ class TestPairRecord:
         )
 
     def test_blocking_summary_prefers_hard_conflict_over_everything(self) -> None:
-        row = make_row(
-            differing_fields={"rule_0": "candidate_set_conflict: different slates"}
-        )
+        row = make_row(differing_fields={"rule_0": "candidate_set_conflict: different slates"})
         record = pair_record(row)
         assert record["primary_blocker"] == "candidate_set_conflict"
-        assert record["next_human_action"] == (
-            "none — pair is rejected by a structured conflict"
-        )
+        assert record["next_human_action"] == ("none — pair is rejected by a structured conflict")
 
     def test_source_finalization_basis_fields(self) -> None:
         row = make_row()
-        row.matched_fields["metadata_excerpts"]["kalshi"][
-            "source_finalization_basis"
-        ] = "fixed_time_snapshot"
+        row.matched_fields["metadata_excerpts"]["kalshi"]["source_finalization_basis"] = (
+            "fixed_time_snapshot"
+        )
         record = pair_record(row)
         assert record["kalshi_source_finalization_basis"] == "fixed_time_snapshot"
         assert record["polymarket_source_finalization_basis"] is None
@@ -211,9 +205,9 @@ class TestPairRecord:
     def test_stat_tie_policy_fields(self) -> None:
         row = make_row()
         row.matched_fields["metadata_excerpts"]["kalshi"]["stat_tie_policy"] = "ties_split"
-        row.matched_fields["metadata_excerpts"]["polymarket"][
-            "stat_tie_policy"
-        ] = "sole_winner_tiebreak"
+        row.matched_fields["metadata_excerpts"]["polymarket"]["stat_tie_policy"] = (
+            "sole_winner_tiebreak"
+        )
         record = pair_record(row)
         assert record["kalshi_stat_tie_policy"] == "ties_split"
         assert record["polymarket_stat_tie_policy"] == "sole_winner_tiebreak"
@@ -239,9 +233,9 @@ class TestPairRecord:
 
     def test_cancellation_policy_basis_fields(self) -> None:
         row = make_row()
-        row.matched_fields["metadata_excerpts"]["polymarket"][
-            "cancellation_policy_basis"
-        ] = "resolves_to_other"
+        row.matched_fields["metadata_excerpts"]["polymarket"]["cancellation_policy_basis"] = (
+            "resolves_to_other"
+        )
         record = pair_record(row)
         assert record["polymarket_cancellation_policy_basis"] == "resolves_to_other"
         assert record["kalshi_cancellation_policy_basis"] is None  # not extracted

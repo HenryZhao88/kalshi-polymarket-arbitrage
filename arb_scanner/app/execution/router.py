@@ -1,8 +1,10 @@
-"""Order router — present but DISABLED BY DEFAULT (SPEC prime directive 5).
+"""Legacy single-order router shim — SUPERSEDED by execution/executor.py.
 
-Every entry point calls clients.geoblock.ensure_execution_allowed first, which
-raises ExecutionDisabledError unless ARB_MODE=execution-enabled AND the runtime
-geoblock check passes. There is no code path that bypasses the gate.
+The supported live path is the gated two-leg ``TwoLegExecutor`` (see
+``execution/executor.py`` and ``execution/runner.py``), which legs both venues
+atomically with unwind-on-failure. This single-order entry point remains only so
+older imports resolve; it still gates first (geoblock + mode) and otherwise
+declines, directing callers to the executor.
 """
 
 from __future__ import annotations
@@ -17,8 +19,9 @@ async def route_order(
     geoblock: GeoblockClient,
     evaluation: OpportunityEvaluation,
 ) -> None:
-    """Gate first; live order placement is intentionally unimplemented."""
+    """Gate first; single-leg routing is not the supported path."""
     await ensure_execution_allowed(settings, geoblock)
     raise NotImplementedError(
-        "live order routing is not shipped; discovery/alert-only is the supported mode"
+        "single-order routing is superseded; use execution.executor.TwoLegExecutor "
+        "(wired via execution.runner / `arb-scanner execute`)"
     )

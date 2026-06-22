@@ -120,8 +120,11 @@ def test_new_named_conflicts_have_their_own_histogram_buckets() -> None:
         # Named text-evidence conflicts outrank the generic market-type bucket.
         assert (
             _primary_rejection_bucket(
-                (reason, "market type crypto_price_threshold (title) != "
-                 "crypto_monthly_performance (title)")
+                (
+                    reason,
+                    "market type crypto_price_threshold (title) != "
+                    "crypto_monthly_performance (title)",
+                )
             )
             == reason_prefix
         )
@@ -323,6 +326,34 @@ class TestScanOnce:
         )
         assert report.verification_verdicts["rejected"] >= 1
 
+    async def test_missing_orderbook_skips_pair_without_aborting_scan(self) -> None:
+        # A Polymarket token with no orderbook returns 404 from the CLOB. The
+        # scan must skip that one pair and finish, not crash the whole pass.
+        from arb_scanner.app.clients.base import NotFoundError
+
+        class NoBookClob(StubClob):
+            async def get_book(self, token_id: str) -> dict[str, Any]:
+                raise NotFoundError(
+                    "404 https://clob.polymarket.com/book: "
+                    '{"error":"No orderbook exists for the requested token id"}'
+                )
+
+        sink = CapturingSink()
+        report = await scan_once(
+            kalshi=StubKalshi(),
+            gamma=StubGamma(),
+            clob=NoBookClob(),
+            sinks=[sink],
+            limits=permissive_limits(),
+            cost_assumptions=known_costs(),
+            now=NOW,
+        )
+        # Pair was accepted by matching but produced no evaluable opportunity
+        # and no alert, and the scan returned a report rather than raising.
+        assert report.pairs_accepted == 1
+        assert report.book_fetch_failures == 1
+        assert sink.sent == []
+
     async def test_market_fee_metadata_is_used_in_economics(self) -> None:
         report = await scan_once(
             kalshi=StubKalshi(),
@@ -446,11 +477,7 @@ class TestScanOnce:
         # manual_review is now triggered by mid-band similarity (0.6–0.9): a
         # related-but-not-identical question. voidPolicy is also dropped so the
         # row still carries a missing settlement fact for the human.
-        manual = {
-            key: value
-            for key, value in POLY_MARKET.items()
-            if key != "voidPolicy"
-        }
+        manual = {key: value for key, value in POLY_MARKET.items() if key != "voidPolicy"}
         manual["question"] = "Will Bitcoin exceed $70,000 sometime in late June?"
         rejected = {
             **POLY_MARKET,

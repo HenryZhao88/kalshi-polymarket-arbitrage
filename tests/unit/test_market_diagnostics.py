@@ -127,6 +127,7 @@ class TestOutcomeEntitiesConflict:
     def test_single_token_names_never_conflict(self) -> None:
         assert not outcome_entities_conflict("bowser", "racine")
 
+
 BASE = MatchedPair(
     kalshi_ticker="K1",
     kalshi_title="Example market",
@@ -209,12 +210,8 @@ def test_fee_confidence_sort_prefers_venue_metadata() -> None:
         confidence=0.61,
         fee_confidence="market_metadata",
     )
-    fallback = replace(
-        BASE, poly_condition_id="fallback", fee_confidence="category_default"
-    )
-    rows = sort_manual_review_pairs(
-        [unknown, fallback, metadata], ManualReviewSort.FEE_CONFIDENCE
-    )
+    fallback = replace(BASE, poly_condition_id="fallback", fee_confidence="category_default")
+    rows = sort_manual_review_pairs([unknown, fallback, metadata], ManualReviewSort.FEE_CONFIDENCE)
     assert [row.poly_condition_id for row in rows] == ["metadata", "fallback", "unknown"]
 
 

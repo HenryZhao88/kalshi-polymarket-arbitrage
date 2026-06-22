@@ -786,9 +786,7 @@ def evaluate_pair(
             "kalshi_outcome_entity": (
                 kalshi_entity_evidence.value if kalshi_entity_evidence else None
             ),
-            "poly_outcome_entity": (
-                poly_entity_evidence.value if poly_entity_evidence else None
-            ),
+            "poly_outcome_entity": (poly_entity_evidence.value if poly_entity_evidence else None),
             "kalshi_outcome_entity_evidence": _evidence(kalshi_entity_evidence),
             "poly_outcome_entity_evidence": _evidence(poly_entity_evidence),
             "category": poly.category or kalshi_category,

@@ -143,8 +143,7 @@ class TestParseFeatures:
             # Country-level winner stays moneyline (different bet from continent).
             ("Will Brazil win the 2026 World Cup?", "sports", MarketType.SPORTS_MONEYLINE),
             (
-                "Will the listed Democratic Senate candidates all win their "
-                "primary elections?",
+                "Will the listed Democratic Senate candidates all win their primary elections?",
                 None,
                 MarketType.ELECTION_CANDIDATE_SWEEP,
             ),
